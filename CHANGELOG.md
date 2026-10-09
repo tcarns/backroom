@@ -1,0 +1,14 @@
+# Changelog
+
+Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
+
+## 0.2.0
+
+First native release, replacing the browser version.
+
+- Windows app and server written in Rust.
+- Voice goes through the server, so a friend's router can't block a direct connection.
+- Noise suppression, voice activation sensitivity, and push to talk that works while a game is in front (keys or mouse buttons 4/5).
+- Per-person volume up to 200%, and mute for me.
+- Server logging with live level changes (`level`, `status`, `help`).
+- The app and server tell you when a new version is available.

@@ -1,0 +1,6 @@
+/target/
+/dist/
+data/
+*.log
+# Holds the group password: never commit it.
+backroom-server.toml

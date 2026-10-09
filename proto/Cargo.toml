@@ -1,0 +1,14 @@
+[package]
+name = "proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+# Checking GitHub for new releases (used by the app and the server, not the test bot).
+updates = ["dep:ureq"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ureq = { version = "3", default-features = false, features = ["native-tls"], optional = true }

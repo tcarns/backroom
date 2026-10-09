@@ -1,0 +1,24 @@
+[package]
+name = "backroom-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "backroom-server"
+path = "src/main.rs"
+
+[dependencies]
+proto = { workspace = true, features = ["updates"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+chrono.workspace = true
+memory-stats.workspace = true
+getrandom.workspace = true
+toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_System_Console", "Win32_Foundation"] }

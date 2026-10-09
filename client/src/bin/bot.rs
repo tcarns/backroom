@@ -1,0 +1,205 @@
+//! Headless test client. Uses the app's real network and voice code, but plays a
+//! test tone instead of a microphone and measures what it hears.
+//!
+//! backroom-bot --server ws://127.0.0.1:3000/ws --name Bot1 --password pw --channel Lounge \
+//!              --tone 440 --listen 660,880 --seconds 6 [--mute-after 3] [--deafen]
+
+use backroom::net::{Net, NetEvent};
+use backroom::voice::{Mixer, TxPipeline, VoiceControls};
+use parking_lot::Mutex;
+use proto::{ClientMsg, ServerMsg, FRAME_SAMPLES, SAMPLE_RATE};
+use std::collections::BTreeMap;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+fn arg(args: &[String], name: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+/// Signal power at one frequency (Goertzel), in dB.
+fn goertzel_db(samples: &[f32], freq: f32) -> f32 {
+    let w = std::f32::consts::TAU * freq / SAMPLE_RATE as f32;
+    let coeff = 2.0 * w.cos();
+    let (mut s1, mut s2) = (0.0f32, 0.0f32);
+    for &x in samples {
+        let s = x + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s;
+    }
+    let power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
+    let norm = power / (samples.len() as f32 * samples.len() as f32 / 4.0);
+    10.0 * norm.max(1e-12).log10()
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let server = arg(&args, "--server").unwrap_or_else(|| "ws://127.0.0.1:3000/ws".into());
+    let name = arg(&args, "--name").unwrap_or_else(|| "Bot".into());
+    let password = arg(&args, "--password").unwrap_or_default();
+    let channel = arg(&args, "--channel").unwrap_or_else(|| "Lounge".into());
+    let tone: f32 = arg(&args, "--tone")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0);
+    let listen: Vec<f32> = arg(&args, "--listen")
+        .map(|s| s.split(',').filter_map(|x| x.parse().ok()).collect())
+        .unwrap_or_default();
+    let seconds: f32 = arg(&args, "--seconds")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(5.0);
+    let mute_after: Option<f32> = arg(&args, "--mute-after").and_then(|s| s.parse().ok());
+    let deafen = args.iter().any(|a| a == "--deafen");
+    let say: Vec<String> = arg(&args, "--say")
+        .map(|s| s.split('|').map(str::to_string).collect())
+        .unwrap_or_default();
+
+    let mixer = Arc::new(Mutex::new(Mixer::default()));
+    let net = Net::spawn(mixer.clone(), Arc::new(|| {}));
+    let ctl = Arc::new(VoiceControls::default());
+    ctl.noise_suppression.store(false, Ordering::Relaxed); // a pure tone isn't speech
+    ctl.deafened.store(deafen, Ordering::Relaxed);
+    mixer.lock().deafened = deafen;
+    let voice = net.voice_sender();
+    let mut tx = TxPipeline::new().expect("opus");
+
+    net.connect(server.clone(), name.clone(), password);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut my_id = 0;
+    let mut joined = false;
+    let mut errors: Vec<String> = Vec::new();
+    while !joined && Instant::now() < deadline {
+        while let Some(ev) = net.try_recv() {
+            match ev {
+                NetEvent::Server(ServerMsg::Welcome { id, .. }) => {
+                    my_id = id;
+                    net.send(ClientMsg::JoinVoice {
+                        channel: channel.clone(),
+                        muted: false,
+                        deafened: deafen,
+                    });
+                }
+                NetEvent::Server(ServerMsg::VoiceJoined { .. }) => joined = true,
+                NetEvent::Server(ServerMsg::Error { message, .. }) => errors.push(message),
+                NetEvent::Failed { message } => {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "name": name, "ok": false, "error": message })
+                    );
+                    std::process::exit(2);
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if !joined {
+        println!(
+            "{}",
+            serde_json::json!({ "name": name, "ok": false, "error": "never joined voice", "errors": errors })
+        );
+        std::process::exit(3);
+    }
+    ctl.in_voice.store(true, Ordering::Relaxed);
+    for line in &say {
+        net.send(ClientMsg::Chat {
+            channel: "general".into(),
+            text: line.clone(),
+        });
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    let start = Instant::now();
+    let mut next = start;
+    let mut phase = 0usize;
+    let mut heard: Vec<f32> = Vec::new();
+    let mut sent = 0u32;
+    let mut sent_after_mute = 0u32;
+    let mut out = vec![0.0f32; FRAME_SAMPLES];
+    let mut speaking_seen: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut pings = Vec::new();
+    let mut muted = false;
+    while start.elapsed() < Duration::from_secs_f32(seconds) {
+        if let Some(t) = mute_after {
+            if !muted && start.elapsed() > Duration::from_secs_f32(t) {
+                muted = true;
+                ctl.muted.store(true, Ordering::Relaxed);
+                net.send(ClientMsg::Status {
+                    muted: true,
+                    deafened: deafen,
+                });
+            }
+        }
+        // Mic: 20 ms of tone (or silence).
+        let frame: Vec<f32> = (0..FRAME_SAMPLES)
+            .map(|i| {
+                if tone > 0.0 {
+                    (std::f32::consts::TAU * tone * (phase + i) as f32 / SAMPLE_RATE as f32).sin()
+                        * 0.3
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        phase += FRAME_SAMPLES;
+        tx.push(&frame, &ctl, &mut |f| {
+            if muted {
+                sent_after_mute += 1;
+            }
+            sent += 1;
+            voice.send(f);
+        });
+        // Speaker: pull 20 ms from the mixer.
+        {
+            let mut m = mixer.lock();
+            m.mix(&mut out);
+            for id in m.speaking() {
+                *speaking_seen.entry(id).or_default() += 1;
+            }
+        }
+        heard.extend_from_slice(&out);
+        while let Some(ev) = net.try_recv() {
+            if let NetEvent::Ping(ms) = ev {
+                pings.push(ms);
+            }
+        }
+        next += Duration::from_millis(20);
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        }
+    }
+
+    // Analyze the second half, when everyone is surely talking (or the first/second half around a mute).
+    let half = heard.len() / 2;
+    let levels: BTreeMap<String, f32> = listen
+        .iter()
+        .map(|f| {
+            (
+                format!("{f}"),
+                (goertzel_db(&heard[half..], *f) * 10.0).round() / 10.0,
+            )
+        })
+        .collect();
+    let first_half: BTreeMap<String, f32> = listen
+        .iter()
+        .map(|f| {
+            (
+                format!("{f}"),
+                (goertzel_db(&heard[FRAME_SAMPLES * 25..half], *f) * 10.0).round() / 10.0,
+            )
+        })
+        .collect();
+    println!(
+        "{}",
+        serde_json::json!({
+            "name": name, "ok": true, "id": my_id, "framesSent": sent, "framesSentWhileMuted": sent_after_mute,
+            "heardSecondHalfDb": levels, "heardFirstHalfDb": first_half,
+            "speakingSeen": speaking_seen, "pingsMs": pings,
+        })
+    );
+    net.disconnect();
+    std::thread::sleep(Duration::from_millis(200));
+}
