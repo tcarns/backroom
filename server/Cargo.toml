@@ -19,6 +19,9 @@ chrono.workspace = true
 memory-stats.workspace = true
 getrandom.workspace = true
 toml = { version = "0.9", default-features = false, features = ["parse", "serde"] }
+# Account passwords are stored as Argon2id hashes; sign-in tokens as SHA-256.
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_System_Console", "Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }

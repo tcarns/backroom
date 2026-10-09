@@ -128,7 +128,12 @@ pub const RESUME_VAR: &str = "BACKROOM_RESUME";
 pub struct Resume {
     pub server: String,
     pub name: String,
+    /// The group password, for servers without accounts (and from 0.5 and earlier).
+    #[serde(default)]
     pub password: String,
+    /// The current sign-in, for servers with accounts.
+    #[serde(default)]
+    pub token: String,
     pub voice: Option<String>,
     pub text_channel: Option<String>,
 }

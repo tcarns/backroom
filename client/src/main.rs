@@ -1,13 +1,14 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod accounts;
 mod attach;
 mod theme;
 
 use attach::{Attachments, ImgState};
 use backroom::audio::{self, DeviceList};
 use backroom::keys::{self, GlobalKeys};
-use backroom::net::{self, Net, NetEvent, Wake};
+use backroom::net::{Net, NetEvent, Wake};
 use backroom::settings::Settings;
 use backroom::updater::{self, Phase, Updater};
 use backroom::voice::{chime, Mixer, VoiceControls};
@@ -121,6 +122,8 @@ struct Banner {
 
 struct VolumePop {
     name: String,
+    /// Their account, for the admin buttons.
+    account: Option<u32>,
     pos: egui::Pos2,
     opened_frame: u64,
 }
@@ -211,6 +214,7 @@ struct App {
     v_press_seen: bool,
     emoji_anchor: egui::Rect,
     emoji_opened_frame: u64,
+    acct: accounts::AccountUi,
 }
 
 impl App {
@@ -273,6 +277,7 @@ impl App {
             v_press_seen: false,
             emoji_anchor: egui::Rect::NOTHING,
             emoji_opened_frame: 0,
+            acct: accounts::AccountUi::default(),
         };
         app.apply_voice_flags();
         if app.s.check_updates {
@@ -280,22 +285,23 @@ impl App {
             spawn_update_check(app.update.clone(), app.wake.clone(), true);
         }
         updater::cleanup_leftovers();
+        // Someone who used the group password before accounts: it's what
+        // "Create account" needs, so have it ready.
+        app.acct.invite = app.s.password.clone();
         if let Some(r) = resume.filter(|r| !r.server.is_empty() && !r.name.is_empty()) {
             // Restarted by an update: sign back in and go back to where we were.
             app.s.server = r.server;
             app.s.name = r.name;
-            app.s.password = r.password;
             app.want_voice = r.voice;
             if let Some(t) = r.text_channel {
                 app.current_text = t;
             }
-            app.connect();
-        } else if app.s.auto_connect
-            && app.s.remember
-            && !app.s.server.is_empty()
-            && !app.s.name.is_empty()
-        {
-            app.connect();
+            if !app.connect_saved(r.token, r.password) {
+                app.want_voice = None;
+            }
+        } else if app.s.auto_connect && app.s.remember {
+            let (token, group) = (app.s.token.clone(), app.s.password.clone());
+            app.connect_saved(token, group);
         }
         if just_updated {
             app.show_banner(
@@ -309,25 +315,8 @@ impl App {
 
     // ------------------------------------------------------------ actions
 
-    fn connect(&mut self) {
-        let url = match net::normalize_server(&self.s.server) {
-            Ok(u) => u,
-            Err(e) => {
-                self.login_error = Some(e);
-                return;
-            }
-        };
-        if self.s.name.trim().is_empty() {
-            self.login_error = Some("Pick a name to join.".into());
-            return;
-        }
-        self.login_error = None;
-        self.conn = Conn::Connecting;
-        self.net
-            .connect(url, self.s.name.trim().to_string(), self.s.password.clone());
-    }
-
     fn sign_out(&mut self) {
+        self.forget_sign_in();
         self.leave_voice_quietly();
         self.want_voice = None;
         self.net.disconnect();
@@ -532,13 +521,7 @@ impl App {
                         self.conn = Conn::Connecting;
                     }
                 }
-                NetEvent::Failed { message } => {
-                    self.leave_voice_quietly();
-                    self.session = None;
-                    self.conn = Conn::Offline;
-                    self.login_error = Some(message);
-                    self.banner = None;
-                }
+                NetEvent::Failed { message, code } => self.on_failed(message, code),
                 NetEvent::Reconnecting { reason } => {
                     if let Some(ch) = self.voice_channel.clone() {
                         self.want_voice = Some(ch);
@@ -575,8 +558,12 @@ impl App {
                 users,
                 features,
                 max_attachment_bytes,
+                account,
+                token,
+                must_change_password,
             } => {
                 let first = self.session.is_none();
+                self.on_welcome(account, token, must_change_password);
                 self.server_restarting = None;
                 self.att.server_supports = features.iter().any(|f| f == FEATURE_ATTACHMENTS);
                 if max_attachment_bytes > 0 {
@@ -609,6 +596,7 @@ impl App {
                 }
                 self.s.auto_connect = self.s.remember;
                 self.s.save();
+                self.follow_renames();
                 if let Some(ch) = self.want_voice.take() {
                     self.join_voice(ch);
                 }
@@ -671,6 +659,7 @@ impl App {
                 if let Some(sess) = self.session.as_mut() {
                     sess.users = users;
                 }
+                self.follow_renames();
             }
             ServerMsg::VoiceJoined { channel } => {
                 self.joining = None;
@@ -685,11 +674,23 @@ impl App {
                 if code == "voice_full" {
                     self.joining = None;
                 }
+                if matches!(
+                    code.as_str(),
+                    "bad_old_password" | "weak_password_change" | "bad_rename"
+                ) {
+                    self.acct.form_msg = Some((message.clone(), true));
+                }
                 self.show_banner(message, true, Some(5));
             }
             ServerMsg::Pong { .. } => {}
             ServerMsg::AttachmentGone { id } => self.att.gone(&id),
             ServerMsg::Restarting { version } => self.server_restarting = Some(version),
+            m @ (ServerMsg::AccountUpdated { .. }
+            | ServerMsg::Accounts { .. }
+            | ServerMsg::AdminResult { .. }
+            | ServerMsg::Notice { .. }) => {
+                self.on_account_msg(&m);
+            }
         }
     }
 
@@ -1069,115 +1070,6 @@ fn message_text(ui: &mut egui::Ui, text: &str) {
 // ---------------------------------------------------------------- screens
 
 impl App {
-    fn login_screen(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default()
-            .frame(Frame::new().fill(pal().bg_deep))
-            .show(ctx, |ui| {
-                let card_h = 470.0;
-                ui.add_space(((ui.available_height() - card_h) / 2.0).max(16.0));
-                ui.vertical_centered(|ui| {
-                    Frame::new()
-                        .fill(pal().bg)
-                        .stroke(Stroke::new(1.0_f32, pal().line))
-                        .corner_radius(CornerRadius::same(16))
-                        .inner_margin(Margin::same(28))
-                        .show(ui, |ui| {
-                            ui.set_width(330.0);
-                            ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                // Logo: three level bars.
-                                let (rect, _) =
-                                    ui.allocate_exact_size(egui::vec2(40.0, 36.0), Sense::hover());
-                                for (i, h) in [16.0f32, 34.0, 24.0].iter().enumerate() {
-                                    let x = rect.left() + i as f32 * 13.0;
-                                    let r = egui::Rect::from_min_max(
-                                        egui::pos2(x, rect.center().y - h / 2.0),
-                                        egui::pos2(x + 8.0, rect.center().y + h / 2.0),
-                                    );
-                                    ui.painter().rect_filled(
-                                        r,
-                                        CornerRadius::same(4),
-                                        pal().accent,
-                                    );
-                                }
-                                ui.add_space(6.0);
-                                ui.label(RichText::new("Backroom").size(26.0).strong());
-                                ui.label(
-                                    RichText::new("Voice and chat for the group.")
-                                        .color(pal().muted),
-                                );
-                                ui.add_space(12.0);
-
-                                let busy = self.conn != Conn::Offline;
-                                let mut submit = false;
-                                for (label, hint, field, secret) in [
-                                    ("Server address", "abc.trycloudflare.com", 0, false),
-                                    ("Your name", "", 1, false),
-                                    ("Group password", "", 2, true),
-                                ] {
-                                    ui.label(
-                                        RichText::new(label).size(13.0).color(pal().muted).strong(),
-                                    );
-                                    let value = match field {
-                                        0 => &mut self.s.server,
-                                        1 => &mut self.s.name,
-                                        _ => &mut self.s.password,
-                                    };
-                                    let edit = egui::TextEdit::singleline(value)
-                                        .hint_text(RichText::new(hint).color(pal().faint))
-                                        .password(secret)
-                                        .desired_width(f32::INFINITY)
-                                        .margin(Margin::symmetric(10, 8))
-                                        .char_limit(if field == 1 { 32 } else { 300 });
-                                    let r = ui.add_enabled(!busy, edit);
-                                    if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                                        submit = true;
-                                    }
-                                    ui.add_space(6.0);
-                                }
-                                ui.checkbox(&mut self.s.remember, "Remember me on this computer");
-                                ui.add_space(4.0);
-                                if let Some(err) = &self.login_error {
-                                    ui.add(
-                                        egui::Label::new(
-                                            RichText::new(err).color(pal().red).size(13.0),
-                                        )
-                                        .wrap(),
-                                    );
-                                    ui.add_space(4.0);
-                                }
-                                ui.add_space(6.0);
-                                let label = if busy { "Connecting…" } else { "Join" };
-                                if primary_button(ui, label, !busy).clicked() || (submit && !busy) {
-                                    self.connect();
-                                }
-                                if busy {
-                                    ui.add_space(6.0);
-                                    if ui.small_button("Cancel").clicked() {
-                                        self.net.disconnect();
-                                        self.conn = Conn::Offline;
-                                    }
-                                }
-                            });
-                        });
-                    let latest = self.update.lock().latest.clone();
-                    if let Some(r) = latest {
-                        ui.add_space(14.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space((ui.available_width() - 330.0).max(0.0) / 2.0);
-                            ui.label(
-                                RichText::new(format!("Backroom {} is available.", r.version))
-                                    .color(pal().muted),
-                            );
-                            ui.hyperlink_to(
-                                RichText::new("Download it").color(pal().accent),
-                                &r.url,
-                            );
-                        });
-                    }
-                });
-            });
-    }
-
     fn main_screen(&mut self, ctx: &egui::Context) {
         let speaking: HashSet<u32> = {
             let mut s: HashSet<u32> = self.mixer.lock().speaking().into_iter().collect();
@@ -1416,6 +1308,7 @@ impl App {
                         if resp.clicked() {
                             open_pop = Some(VolumePop {
                                 name: m.name.clone(),
+                                account: m.account,
                                 pos: rect.right_top() + egui::vec2(8.0, 0.0),
                                 opened_frame: ui.ctx().cumulative_frame_nr(),
                             });
@@ -1432,10 +1325,35 @@ impl App {
                 names.len()
             }),
         );
-        let names: BTreeSet<&str> = sess.users.iter().map(|u| u.name.as_str()).collect();
-        for name in names {
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::hover());
+        let mut people: BTreeMap<&str, (Option<u32>, bool)> = BTreeMap::new();
+        for u in &sess.users {
+            let entry = people
+                .entry(u.name.as_str())
+                .or_insert((u.account, u.id == sess.me_id));
+            entry.1 |= u.id == sess.me_id;
+        }
+        for (name, (account, is_me)) in people {
+            let sense = if is_me {
+                Sense::hover()
+            } else {
+                Sense::click()
+            };
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), sense);
+            if !is_me {
+                if resp.hovered() {
+                    ui.painter()
+                        .rect_filled(rect, CornerRadius::same(6), pal().raised);
+                }
+                if resp.clicked() {
+                    open_pop = Some(VolumePop {
+                        name: name.to_string(),
+                        account,
+                        pos: rect.right_top() + egui::vec2(8.0, 0.0),
+                        opened_frame: ui.ctx().cumulative_frame_nr(),
+                    });
+                }
+            }
             let p = ui.painter();
             let c = rect.left_center() + egui::vec2(20.0, 0.0);
             paint_avatar(p, c, 11.0, name, false, pal().bg_deep);
@@ -1738,7 +1656,8 @@ impl App {
         let resume = updater::Resume {
             server: self.s.server.clone(),
             name: self.s.name.clone(),
-            password: self.s.password.clone(),
+            password: self.acct.group_password.clone().unwrap_or_default(),
+            token: self.acct.token.clone().unwrap_or_default(),
             voice: self
                 .voice_channel
                 .clone()
@@ -2387,10 +2306,12 @@ impl App {
     fn volume_popup(&mut self, ctx: &egui::Context) {
         let Some(pop) = &self.pop else { return };
         let name = pop.name.clone();
+        let account = pop.account;
+        let pos = pop.pos;
         let mut vol = (self.s.volume(&name) * 100.0).round();
         let mut muted = self.s.local_mutes.contains(&name);
         let area = egui::Area::new(egui::Id::new("volume_pop"))
-            .fixed_pos(pop.pos)
+            .fixed_pos(pos)
             .order(egui::Order::Foreground)
             .constrain(true)
             .show(ctx, |ui| {
@@ -2410,10 +2331,18 @@ impl App {
                             )
                             .changed();
                         let changed_mute = ui.checkbox(&mut muted, "Mute for me").changed();
-                        (changed_vol, changed_mute)
+                        let used_admin = match account {
+                            Some(a) => self.admin_popup_buttons(ui, a, &name),
+                            None => false,
+                        };
+                        (changed_vol, changed_mute, used_admin)
                     })
             });
-        let (changed_vol, changed_mute) = area.inner.inner;
+        let (changed_vol, changed_mute, used_admin) = area.inner.inner;
+        if used_admin {
+            self.pop = None;
+            return;
+        }
         if changed_vol {
             self.s.volumes.insert(name.clone(), vol / 100.0);
         }
@@ -2710,7 +2639,7 @@ impl App {
                             let u = self.update.lock();
                             (u.checking, u.latest.clone(), u.error.clone(), u.checked)
                         };
-                        ui.horizontal(|ui| {
+                        {
                             let status = if checking {
                                 "Checking…".to_string()
                             } else if let Some(r) = &latest {
@@ -2722,12 +2651,20 @@ impl App {
                             } else {
                                 String::new()
                             };
-                            ui.label(
-                                RichText::new(format!("Version {}. {status}", updates::CURRENT))
+                            // Wrapped: this window fits its content, so one long line
+                            // (like an error from GitHub) would stretch it across the screen.
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(format!(
+                                        "Version {}. {status}",
+                                        updates::CURRENT
+                                    ))
                                     .size(13.0),
+                                )
+                                .wrap(),
                             );
-                        });
-                        ui.horizontal(|ui| {
+                        }
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add_enabled(
                                     !checking && !self.updater.busy(),
@@ -2738,9 +2675,7 @@ impl App {
                                 spawn_update_check(self.update.clone(), self.wake.clone(), false);
                             }
                             if let Some(r) = &latest {
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    self.update_controls(ui, r)
-                                });
+                                self.update_controls(ui, r);
                             }
                         });
                         if ui
@@ -2756,6 +2691,7 @@ impl App {
                         ui.add_space(10.0);
                         ui.separator();
                         ui.add_space(4.0);
+                        self.account_settings(ui);
                         if let Some(mb) = self.mem_mb {
                             ui.label(
                                 RichText::new(format!("Backroom is using {mb:.0} MB of memory."))
@@ -2854,6 +2790,7 @@ impl eframe::App for App {
 
         if self.session.is_some() && self.conn != Conn::Offline {
             self.main_screen(ctx);
+            self.account_dialogs(ctx);
         } else {
             self.login_screen(ctx);
         }

@@ -5,6 +5,8 @@
 
 #[macro_use]
 mod log;
+mod accounts;
+mod auth;
 mod config;
 mod selfupdate;
 
@@ -44,6 +46,13 @@ struct Client {
     chat_times: VecDeque<Instant>,
     report_times: VecDeque<Instant>,
     upload_times: VecDeque<Instant>,
+    /// Signed in to this account (None for apps from before accounts... never, now).
+    account: Option<u32>,
+    admin: bool,
+    /// The saved sign-in this connection used or was given (for "sign out").
+    token_hash: Option<String>,
+    /// An app from before accounts: can read, but not chat or talk.
+    guest: bool,
 }
 
 struct State {
@@ -51,6 +60,9 @@ struct State {
     clients: HashMap<u32, Client>,
     history: BTreeMap<String, Vec<ChatMessage>>,
     history_dirty: bool,
+    accounts: accounts::Store,
+    /// Recent wrong passwords, by address.
+    failures: HashMap<String, VecDeque<Instant>>,
     next_id: u32,
     next_voice_order: u64,
     started: Instant,
@@ -143,6 +155,7 @@ impl State {
                             name: c.name.clone(),
                             muted: c.muted,
                             deafened: c.deafened,
+                            account: c.account,
                         })
                         .collect(),
                 }
@@ -158,6 +171,8 @@ impl State {
             .map(|c| User {
                 id: c.id,
                 name: c.name.clone(),
+                account: c.account,
+                admin: c.admin,
             })
             .collect();
         u.sort_by_key(|x| x.id);
@@ -243,26 +258,42 @@ impl State {
 
 // ---------------------------------------------------------------- message handling
 
-fn handle_text(shared: &Shared, id: u32, text: &str) {
+/// Handle a text message. Ones that need password hashing are handed back,
+/// to be awaited with the state unlocked (see `handle_async`).
+fn handle_text(shared: &Shared, id: u32, text: &str) -> Option<ClientMsg> {
     let msg: ClientMsg = match serde_json::from_str(text) {
         Ok(m) => m,
         Err(_) => {
             let st = shared.lock().unwrap();
             debug!("conn", "Ignored an unreadable message from {}", st.who(id));
-            return;
+            return None;
         }
     };
     let mut st = shared.lock().unwrap();
     let authed = st.clients.get(&id).map(|c| c.authed).unwrap_or(false);
     if !authed && !matches!(msg, ClientMsg::Hello { .. } | ClientMsg::Ping { .. }) {
-        return;
+        return None;
+    }
+    let guest = st.clients.get(&id).is_some_and(|c| c.guest);
+    if guest
+        && !matches!(
+            msg,
+            ClientMsg::Ping { .. }
+                | ClientMsg::Report { .. }
+                | ClientMsg::GetAttachment { .. }
+                | ClientMsg::LeaveVoice
+                | ClientMsg::Status { .. }
+        )
+    {
+        st.send(id, &auth::update_required());
+        return None;
     }
     match msg {
-        ClientMsg::Hello {
-            name,
-            password,
-            version,
-        } => hello(&mut st, id, &name, &password, version),
+        m @ (ClientMsg::Hello { .. }
+        | ClientMsg::ChangePassword { .. }
+        | ClientMsg::Admin { .. }) => return Some(m),
+        ClientMsg::Rename { name } => auth::rename(&mut st, id, &name),
+        ClientMsg::SignOut => auth::sign_out(&mut st, id),
         ClientMsg::Chat { channel, text } => chat(&mut st, id, &channel, &text),
         ClientMsg::JoinVoice {
             channel,
@@ -272,7 +303,7 @@ fn handle_text(shared: &Shared, id: u32, text: &str) {
         ClientMsg::LeaveVoice => leave_voice(&mut st, id, None),
         ClientMsg::Status { muted, deafened } => {
             let Some(c) = st.clients.get_mut(&id) else {
-                return;
+                return None;
             };
             if deafened != c.deafened {
                 debug!(
@@ -300,104 +331,25 @@ fn handle_text(shared: &Shared, id: u32, text: &str) {
         ClientMsg::Report { kind, message } => report(&mut st, id, &kind, &message),
         ClientMsg::GetAttachment { id: att } => request_attachment(&st, id, &att),
     }
+    None
 }
 
-fn hello(st: &mut State, id: u32, name: &str, password: &str, version: u32) {
-    let ip = st
-        .clients
-        .get(&id)
-        .map(|c| c.ip.clone())
-        .unwrap_or_default();
-    if st.clients.get(&id).map(|c| c.authed).unwrap_or(true) {
-        return;
+async fn handle_async(shared: &Shared, id: u32, msg: ClientMsg) {
+    match msg {
+        ClientMsg::Hello {
+            name,
+            password,
+            version,
+            accounts,
+            auth,
+        } => auth::hello(shared, id, name, password, version, accounts, auth).await,
+        ClientMsg::ChangePassword {
+            old_password,
+            new_password,
+        } => auth::change_password(shared, id, old_password, new_password).await,
+        ClientMsg::Admin { action } => auth::admin(shared, id, action).await,
+        _ => {}
     }
-    let name: String = name
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect::<String>()
-        .trim()
-        .chars()
-        .take(32)
-        .collect();
-    if name.is_empty() {
-        debug!("auth", "Sign-in from {ip} with an empty name");
-        st.send(
-            id,
-            &ServerMsg::Error {
-                code: "bad_name".into(),
-                message: "Pick a name to join.".into(),
-            },
-        );
-        return;
-    }
-    if version != PROTOCOL_VERSION {
-        warn!("auth", "{name} ({ip}) has a different app version (protocol {version}, server {PROTOCOL_VERSION})");
-        st.send(
-            id,
-            &ServerMsg::Error {
-                code: "bad_version".into(),
-                message:
-                    "Your Backroom app is a different version than the server. Get the latest one."
-                        .into(),
-            },
-        );
-        return;
-    }
-    let ok = st.cfg.password.is_empty()
-        || constant_time_eq(password.as_bytes(), st.cfg.password.as_bytes());
-    if !ok {
-        warn!("auth", "Wrong password from {ip} (name \"{name}\")");
-        // Reply after a short delay so password guessing is slow.
-        if let Some(c) = st.clients.get(&id) {
-            let tx = c.tx.clone();
-            let text = serde_json::to_string(&ServerMsg::Error {
-                code: "bad_password".into(),
-                message: "That password is not right.".into(),
-            })
-            .unwrap();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(800)).await;
-                let _ = tx.send(Message::Text(text.into())).await;
-                let _ = tx.send(Message::Close(None)).await;
-            });
-        }
-        return;
-    }
-    {
-        let c = st.clients.get_mut(&id).unwrap();
-        c.authed = true;
-        c.name = name.clone();
-        c.signed_in_at = Instant::now();
-    }
-    info!(
-        "conn",
-        "{name} signed in from {ip} ({} online)",
-        st.online_count()
-    );
-    let welcome = ServerMsg::Welcome {
-        id,
-        name,
-        app_name: st.cfg.app_name.clone(),
-        text_channels: st.cfg.text_channels.clone(),
-        voice_channels: st.cfg.voice_channels.clone(),
-        max_per_voice_channel: st.cfg.max_per_voice_channel,
-        history: st.history.clone(),
-        voice_state: st.voice_state(),
-        users: st.users(),
-        features: vec![FEATURE_ATTACHMENTS.to_string()],
-        max_attachment_bytes: st.cfg.max_attachment_bytes,
-    };
-    st.send(id, &welcome);
-    st.broadcast_presence();
-}
-
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    // Compare full length regardless of where a difference is.
-    let mut diff = (a.len() != b.len()) as u8;
-    for i in 0..a.len().max(b.len()) {
-        diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
-    }
-    diff == 0
 }
 
 fn chat(st: &mut State, id: u32, channel: &str, text: &str) {
@@ -627,18 +579,26 @@ fn handle_voice(shared: &Shared, id: u32, frame: &[u8]) {
 async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) {
     let _ = stream.set_nodelay(true);
     let mut forwarded: Option<String> = None;
+    // Only a proxy on this PC (like the Cloudflare tunnel) may say who the
+    // visitor really is. From anyone else these headers could be made up to
+    // dodge a ban or the wrong-password limit.
+    let via_local_proxy = addr.ip().is_loopback();
     let ws = tokio_tungstenite::accept_hdr_async(stream, |req: &Request, resp: Response| {
-        let h = req.headers();
-        forwarded = h
-            .get("cf-connecting-ip")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_string)
-            .or_else(|| {
-                h.get("x-forwarded-for")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|v| v.split(',').next().unwrap_or("").trim().to_string())
-            })
-            .filter(|s| !s.is_empty());
+        if via_local_proxy {
+            let h = req.headers();
+            forwarded = h
+                .get("cf-connecting-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.trim().to_string())
+                .or_else(|| {
+                    // The last entry is the one the proxy added; earlier ones
+                    // came from the visitor and could be anything.
+                    h.get("x-forwarded-for")
+                        .and_then(|v| v.to_str().ok())
+                        .map(|v| v.rsplit(',').next().unwrap_or("").trim().to_string())
+                })
+                .filter(|s| s.parse::<std::net::IpAddr>().is_ok());
+        }
         Ok(resp)
     })
     .await;
@@ -676,6 +636,10 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
                 chat_times: VecDeque::new(),
                 report_times: VecDeque::new(),
                 upload_times: VecDeque::new(),
+                account: None,
+                admin: false,
+                token_hash: None,
+                guest: false,
             },
         );
         id
@@ -701,7 +665,11 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
             msg = stream.next() => {
                 last_heard = Instant::now();
                 match msg {
-                    Some(Ok(Message::Text(t))) => handle_text(&shared, id, t.as_str()),
+                    Some(Ok(Message::Text(t))) => {
+                        if let Some(m) = handle_text(&shared, id, t.as_str()) {
+                            handle_async(&shared, id, m).await;
+                        }
+                    }
                     Some(Ok(Message::Binary(b))) => {
                         if b.first() == Some(&ATTACH_UPLOAD) {
                             handle_upload(&shared, id, &b);
@@ -763,6 +731,7 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
                     st.online_count()
                 );
                 st.broadcast_presence();
+                st.send_accounts_to_admins();
             } else {
                 debug!("conn", "Connection from {ip} closed");
             }
@@ -865,6 +834,10 @@ fn clean_file_name(name: &str) -> String {
 fn handle_upload(shared: &Shared, id: u32, frame: &[u8]) {
     let mut st = shared.lock().unwrap();
     if !st.clients.get(&id).is_some_and(|c| c.authed) {
+        return;
+    }
+    if st.clients.get(&id).is_some_and(|c| c.guest) {
+        st.send(id, &auth::update_required());
         return;
     }
     let name = st.who(id);
@@ -1085,8 +1058,9 @@ fn console_commands(shared: Shared, updates: std::sync::mpsc::Sender<selfupdate:
         let arg = parts.collect::<Vec<_>>().join(" ");
         match cmd.to_lowercase().as_str() {
             "help" => println!(
-                "Commands:\n  level              show the current log level\n  level <name>       change it now ({})\n  status             who is online and in voice, uptime, memory use\n  update             install the newest version now and restart\n  help               show this list",
-                log::LEVEL_NAMES.join(", ")
+                "Commands:\n  level              show the current log level\n  level <name>       change it now ({})\n  status             who is online and in voice, uptime, memory use\n  update             install the newest version now and restart\n{}\n  help               show this list",
+                log::LEVEL_NAMES.join(", "),
+                auth::CONSOLE_HELP
             ),
             "level" if arg.is_empty() => println!("Log level is \"{}\". Options, most to least detail: {}", log::level().name(), log::LEVEL_NAMES.join(", ")),
             "level" => match Level::parse(&arg) {
@@ -1101,7 +1075,10 @@ fn console_commands(shared: Shared, updates: std::sync::mpsc::Sender<selfupdate:
             "update" => {
                 let _ = updates.send(selfupdate::Request::Now);
             }
-            _ => println!("Unknown command \"{cmd}\". Type \"help\" for the list."),
+            other => match auth::console(&shared, other, &arg) {
+                Some(out) => println!("{out}"),
+                None => println!("Unknown command \"{cmd}\". Type \"help\" for the list."),
+            },
         }
     }
 }
@@ -1121,7 +1098,7 @@ fn should_restart(st: &State) -> Option<String> {
 
 async fn restart_for_update(shared: &Shared, version: String) -> ! {
     {
-        let st = shared.lock().unwrap();
+        let mut st = shared.lock().unwrap();
         let online = st.online_count();
         info!(
             "update",
@@ -1136,6 +1113,9 @@ async fn restart_for_update(shared: &Shared, version: String) -> ! {
             version: version.clone(),
         });
         save_history(&st.cfg, &st.history);
+        if st.accounts.dirty {
+            let _ = st.accounts.save();
+        }
     }
     // Let the goodbye messages go out.
     tokio::time::sleep(Duration::from_millis(400)).await;
@@ -1184,6 +1164,13 @@ fn main() {
 }
 
 async fn run(cfg: Arc<Config>) {
+    let accounts = match accounts::Store::load(&cfg.data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            critical!("auth", "{e}");
+            std::process::exit(1);
+        }
+    };
     let history = load_history(&cfg);
     cleanup_attachments(&cfg, &history);
     let shared: Shared = Arc::new(Mutex::new(State {
@@ -1191,6 +1178,8 @@ async fn run(cfg: Arc<Config>) {
         clients: HashMap::new(),
         history,
         history_dirty: false,
+        accounts,
+        failures: HashMap::new(),
         next_id: 0,
         next_voice_order: 0,
         started: Instant::now(),
@@ -1253,9 +1242,10 @@ async fn run(cfg: Arc<Config>) {
     if cfg.password.is_empty() {
         warn!(
             "server",
-            "No password set: anyone with the address can join."
+            "No group password set: anyone with the address can create an account."
         );
     }
+    auth::startup_notes(&shared.lock().unwrap().accounts);
 
     let (update_tx, update_rx) = std::sync::mpsc::channel();
     {
@@ -1298,6 +1288,11 @@ async fn run(cfg: Arc<Config>) {
                 every.tick().await;
                 let (snapshot, restart) = {
                     let mut st = shared.lock().unwrap();
+                    if st.accounts.dirty {
+                        if let Err(e) = st.accounts.save() {
+                            error!("auth", "{e}");
+                        }
+                    }
                     let restart = should_restart(&st);
                     let snapshot = (st.history_dirty && restart.is_none()).then(|| {
                         st.history_dirty = false;
@@ -1334,9 +1329,12 @@ async fn run(cfg: Arc<Config>) {
         _ = tokio::signal::ctrl_c() => {}
     }
     info!("server", "Shutting down");
-    let st = shared.lock().unwrap();
+    let mut st = shared.lock().unwrap();
     if st.history_dirty {
         save_history(&st.cfg, &st.history);
+    }
+    if st.accounts.dirty {
+        let _ = st.accounts.save();
     }
     std::process::exit(0);
 }

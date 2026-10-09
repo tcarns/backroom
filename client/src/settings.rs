@@ -9,7 +9,11 @@ use std::path::PathBuf;
 pub struct Settings {
     pub server: String,
     pub name: String,
-    /// Kept only when `remember` is on. Stored as plain text in your user folder.
+    /// Your saved sign-in from the server (not your password), kept only when
+    /// `remember` is on.
+    pub token: String,
+    /// The group password, saved by versions before accounts (and still, for
+    /// servers that haven't been updated). Used to fill in "Create account".
     pub password: String,
     pub remember: bool,
     /// Connect straight away next time (set after a successful sign-in with "remember").
@@ -41,6 +45,7 @@ impl Default for Settings {
         Self {
             server: String::new(),
             name: String::new(),
+            token: String::new(),
             password: String::new(),
             remember: true,
             auto_connect: false,
@@ -84,6 +89,7 @@ impl Settings {
         let mut copy = self.clone();
         if !copy.remember {
             copy.password.clear();
+            copy.token.clear();
             copy.auto_connect = false;
         }
         let p = path();

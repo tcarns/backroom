@@ -5,7 +5,7 @@
 use crate::voice::{Mixer, Receiver};
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
-use proto::{ClientMsg, ServerMsg, PROTOCOL_VERSION};
+use proto::{Auth, ClientMsg, ServerMsg, FATAL_ERRORS, PROTOCOL_VERSION};
 use std::collections::HashMap;
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
@@ -15,11 +15,29 @@ use tokio_tungstenite::tungstenite::{Bytes, Message};
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
+/// How to sign in.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SignIn {
+    /// The old way: a name and the group password. Servers from before accounts
+    /// accept it; newer ones answer "account_required".
+    Group { password: String },
+    /// Your account's name (the `name`) and password.
+    Login { password: String },
+    /// Create an account. On a server from before accounts this signs in the old
+    /// way with the group password instead.
+    Register {
+        group_password: String,
+        new_password: String,
+    },
+    /// A sign-in the server handed out earlier.
+    Token { token: String },
+}
+
 pub enum NetCmd {
     Connect {
         url: String,
         name: String,
-        password: String,
+        sign_in: SignIn,
     },
     Disconnect,
     Send(ClientMsg),
@@ -37,8 +55,10 @@ pub enum NetEvent {
         reason: String,
     },
     /// Stopped trying (wrong password, unreachable on first try, etc.).
+    /// `code` is the server's reason, when it gave one (e.g. "session_expired").
     Failed {
         message: String,
+        code: Option<String>,
     },
     Ping(u32),
     /// Bytes of an attachment we asked for.
@@ -80,12 +100,8 @@ impl Net {
             events: ev_rx,
         }
     }
-    pub fn connect(&self, url: String, name: String, password: String) {
-        let _ = self.cmd.send(NetCmd::Connect {
-            url,
-            name,
-            password,
-        });
+    pub fn connect(&self, url: String, name: String, sign_in: SignIn) {
+        let _ = self.cmd.send(NetCmd::Connect { url, name, sign_in });
     }
     pub fn disconnect(&self) {
         let _ = self.cmd.send(NetCmd::Disconnect);
@@ -150,14 +166,14 @@ fn now_ms() -> u64 {
 enum SessionEnd {
     Lost(String),
     UserDisconnect,
-    NewTarget(String, String, String),
-    Fatal(String),
+    NewTarget(String, String, SignIn),
+    Fatal(String, Option<String>),
 }
 
 struct Target {
     url: String,
     name: String,
-    password: String,
+    sign_in: SignIn,
     welcomed: bool,
 }
 
@@ -177,15 +193,11 @@ async fn run(
         // Idle until asked to connect.
         let Some(t) = target.as_mut() else {
             match cmd_rx.recv().await {
-                Some(NetCmd::Connect {
-                    url,
-                    name,
-                    password,
-                }) => {
+                Some(NetCmd::Connect { url, name, sign_in }) => {
                     target = Some(Target {
                         url,
                         name,
-                        password,
+                        sign_in,
                         welcomed: false,
                     });
                     delay = Duration::from_secs(1);
@@ -210,23 +222,24 @@ async fn run(
         mixer.lock().clear();
         match end {
             SessionEnd::UserDisconnect => target = None,
-            SessionEnd::NewTarget(url, name, password) => {
+            SessionEnd::NewTarget(url, name, sign_in) => {
                 target = Some(Target {
                     url,
                     name,
-                    password,
+                    sign_in,
                     welcomed: false,
                 });
                 delay = Duration::from_secs(1);
             }
-            SessionEnd::Fatal(message) => {
-                emit(NetEvent::Failed { message });
+            SessionEnd::Fatal(message, code) => {
+                emit(NetEvent::Failed { message, code });
                 target = None;
             }
             SessionEnd::Lost(reason) => {
                 if !t.welcomed {
                     emit(NetEvent::Failed {
                         message: format!("Couldn't connect: {reason}."),
+                        code: None,
                     });
                     target = None;
                     continue;
@@ -240,8 +253,8 @@ async fn run(
                         _ = tokio::time::sleep_until(deadline) => break,
                         cmd = cmd_rx.recv() => match cmd {
                             Some(NetCmd::Disconnect) => { target = None; break; }
-                            Some(NetCmd::Connect { url, name, password }) => {
-                                target = Some(Target { url, name, password, welcomed: false });
+                            Some(NetCmd::Connect { url, name, sign_in }) => {
+                                target = Some(Target { url, name, sign_in, welcomed: false });
                                 delay = Duration::from_secs(1);
                                 break;
                             }
@@ -286,10 +299,31 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let (mut sink, mut stream) = ws.split();
+    let (password, auth) = match &target.sign_in {
+        SignIn::Group { password } => (password.clone(), None),
+        SignIn::Login { password } => (password.clone(), Some(Auth::Login)),
+        SignIn::Register {
+            group_password,
+            new_password,
+        } => (
+            group_password.clone(),
+            Some(Auth::Register {
+                new_password: new_password.clone(),
+            }),
+        ),
+        SignIn::Token { token } => (
+            String::new(),
+            Some(Auth::Token {
+                token: token.clone(),
+            }),
+        ),
+    };
     let hello = ClientMsg::Hello {
         name: target.name.clone(),
-        password: target.password.clone(),
+        password,
         version: PROTOCOL_VERSION,
+        accounts: true,
+        auth,
     };
     if sink
         .send(Message::Text(serde_json::to_string(&hello).unwrap().into()))
@@ -325,12 +359,25 @@ where
                     Some(Ok(Message::Text(t))) => {
                         let Ok(m) = serde_json::from_str::<ServerMsg>(t.as_str()) else { continue };
                         match &m {
-                            ServerMsg::Error { code, message } if code == "bad_password" || code == "bad_version" || code == "bad_name" => {
-                                return SessionEnd::Fatal(message.clone());
+                            ServerMsg::Error { code, message } if FATAL_ERRORS.contains(&code.as_str()) => {
+                                // Let the UI see the message too, then stop.
+                                return SessionEnd::Fatal(message.clone(), Some(code.clone()));
                             }
-                            ServerMsg::Welcome { voice_state, .. } => {
+                            ServerMsg::Welcome { voice_state, token, name, .. } => {
                                 target.welcomed = true;
+                                // Reconnect with the server's sign-in from now on, so a
+                                // dropped connection never needs the password again.
+                                if let Some(t) = token {
+                                    target.sign_in = SignIn::Token { token: t.clone() };
+                                    target.name = name.clone();
+                                }
                                 update_names(&mut names, voice_state);
+                            }
+                            ServerMsg::AccountUpdated { account, token } => {
+                                target.name = account.name.clone();
+                                if let Some(t) = token {
+                                    target.sign_in = SignIn::Token { token: t.clone() };
+                                }
                             }
                             ServerMsg::VoiceState { state } => {
                                 update_names(&mut names, state);
@@ -365,9 +412,9 @@ where
                         let _ = sink.close().await;
                         return SessionEnd::UserDisconnect;
                     }
-                    Some(NetCmd::Connect { url, name, password }) => {
+                    Some(NetCmd::Connect { url, name, sign_in }) => {
                         let _ = sink.close().await;
-                        return SessionEnd::NewTarget(url, name, password);
+                        return SessionEnd::NewTarget(url, name, sign_in);
                     }
                     None => return SessionEnd::UserDisconnect,
                 };

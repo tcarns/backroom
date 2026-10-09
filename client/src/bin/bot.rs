@@ -4,7 +4,7 @@
 //! backroom-bot --server ws://127.0.0.1:3000/ws --name Bot1 --password pw --channel Lounge \
 //!              --tone 440 --listen 660,880 --seconds 6 [--mute-after 3] [--deafen]
 
-use backroom::net::{Net, NetEvent};
+use backroom::net::{Net, NetEvent, SignIn};
 use backroom::voice::{Mixer, TxPipeline, VoiceControls};
 use parking_lot::Mutex;
 use proto::{ClientMsg, ServerMsg, FRAME_SAMPLES, SAMPLE_RATE};
@@ -39,7 +39,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let server = arg(&args, "--server").unwrap_or_else(|| "ws://127.0.0.1:3000/ws".into());
     let name = arg(&args, "--name").unwrap_or_else(|| "Bot".into());
+    // The group password. The bot creates an account (or signs in to it, if the
+    // name is taken) with --account-password; --legacy signs in the old way.
     let password = arg(&args, "--password").unwrap_or_default();
+    let account_password =
+        arg(&args, "--account-password").unwrap_or_else(|| format!("bot-{name}-password"));
+    let legacy = args.iter().any(|a| a == "--legacy");
     let channel = arg(&args, "--channel").unwrap_or_else(|| "Lounge".into());
     let tone: f32 = arg(&args, "--tone")
         .and_then(|s| s.parse().ok())
@@ -67,7 +72,18 @@ fn main() {
     let voice = net.voice_sender();
     let mut tx = TxPipeline::new().expect("opus");
 
-    net.connect(server.clone(), name.clone(), password);
+    let first = if legacy {
+        SignIn::Group {
+            password: password.clone(),
+        }
+    } else {
+        SignIn::Register {
+            group_password: password.clone(),
+            new_password: account_password.clone(),
+        }
+    };
+    net.connect(server.clone(), name.clone(), first);
+    let mut tried_login = legacy;
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut my_id = 0;
     let mut joined = false;
@@ -85,10 +101,22 @@ fn main() {
                 }
                 NetEvent::Server(ServerMsg::VoiceJoined { .. }) => joined = true,
                 NetEvent::Server(ServerMsg::Error { message, .. }) => errors.push(message),
-                NetEvent::Failed { message } => {
+                NetEvent::Failed { code, .. }
+                    if code.as_deref() == Some("name_taken") && !tried_login =>
+                {
+                    tried_login = true;
+                    net.connect(
+                        server.clone(),
+                        name.clone(),
+                        SignIn::Login {
+                            password: account_password.clone(),
+                        },
+                    );
+                }
+                NetEvent::Failed { message, code } => {
                     println!(
                         "{}",
-                        serde_json::json!({ "name": name, "ok": false, "error": message })
+                        serde_json::json!({ "name": name, "ok": false, "error": message, "code": code })
                     );
                     std::process::exit(2);
                 }

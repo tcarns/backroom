@@ -22,11 +22,37 @@ pub const MAX_OPUS_PACKET: usize = 1275;
     rename_all_fields = "camelCase"
 )]
 pub enum ClientMsg {
+    /// First message on a connection. Older apps send only `name`, `password`
+    /// (the group password) and `version`; servers from 0.5 and earlier ignore
+    /// the rest and treat it that way.
     Hello {
+        /// Account name (or, for older servers, the name to show).
         name: String,
+        /// The account's password for `Login`; the group password for `Register`
+        /// and for older apps.
         password: String,
         #[serde(default)]
         version: u32,
+        /// The app knows about accounts (so the server can ask it to create one).
+        #[serde(default)]
+        accounts: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth: Option<Auth>,
+    },
+    /// Change your own password. Signs out your other devices.
+    ChangePassword {
+        old_password: String,
+        new_password: String,
+    },
+    /// Change your account name.
+    Rename {
+        name: String,
+    },
+    /// Sign out on this device (forgets its saved sign-in on the server).
+    SignOut,
+    /// Admins only.
+    Admin {
+        action: AdminAction,
     },
     Chat {
         channel: String,
@@ -58,6 +84,71 @@ pub enum ClientMsg {
     GetAttachment {
         id: String,
     },
+}
+
+/// How a `Hello` signs in.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum Auth {
+    /// `name` and `password` are the account's.
+    Login,
+    /// Create an account named `name` with `new_password`; `password` is the
+    /// group password, which works as the invite.
+    Register { new_password: String },
+    /// A sign-in the server handed out earlier (in `Welcome`).
+    Token { token: String },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "do", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum AdminAction {
+    /// Disconnect them (they can sign back in).
+    Kick {
+        account: u32,
+    },
+    /// Disconnect them and stop them signing in or creating another account.
+    Ban {
+        account: u32,
+    },
+    Unban {
+        account: u32,
+    },
+    /// Give them a temporary password (sent back in `AdminResult`) that they
+    /// must change when they sign in.
+    ResetPassword {
+        account: u32,
+    },
+    SetAdmin {
+        account: u32,
+        admin: bool,
+    },
+}
+
+/// You, as the server sees you.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub id: u32,
+    pub name: String,
+    #[serde(default)]
+    pub admin: bool,
+}
+
+/// One row of the admin's account list.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSummary {
+    pub id: u32,
+    pub name: String,
+    pub admin: bool,
+    pub banned: bool,
+    pub online: bool,
+    /// Milliseconds since the Unix epoch; 0 if never.
+    pub last_seen: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -105,6 +196,9 @@ pub struct VoiceMember {
     pub name: String,
     pub muted: bool,
     pub deafened: bool,
+    /// Their account (servers without accounts leave it out).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -117,6 +211,10 @@ pub struct VoiceChannelState {
 pub struct User {
     pub id: u32,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admin: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -142,6 +240,15 @@ pub enum ServerMsg {
         features: Vec<String>,
         #[serde(default)]
         max_attachment_bytes: u64,
+        /// Who you're signed in as (servers without accounts leave it out).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        account: Option<Account>,
+        /// A sign-in to reconnect with, and to save if "remember me" is on.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        /// Signed in with a temporary password: ask for a new one.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        must_change_password: bool,
     },
     Error {
         code: String,
@@ -172,7 +279,48 @@ pub enum ServerMsg {
         #[serde(default)]
         version: String,
     },
+    /// Your account changed (renamed, new password). `token` replaces the old
+    /// sign-in when present.
+    AccountUpdated {
+        account: Account,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+    },
+    /// Admins: everyone's accounts (sent after sign-in and whenever one changes).
+    Accounts {
+        list: Vec<AccountSummary>,
+    },
+    /// Admins: what an action did. `secret` is a temporary password to pass on.
+    AdminResult {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        secret: Option<String>,
+    },
+    /// Something worked (e.g. "Password changed").
+    Notice {
+        text: String,
+    },
 }
+
+/// The server has accounts.
+pub const FEATURE_ACCOUNTS: &str = "accounts";
+
+/// Error codes after which the app stops trying and shows the sign-in screen.
+pub const FATAL_ERRORS: &[&str] = &[
+    "bad_password",
+    "bad_version",
+    "bad_name",
+    "bad_login",
+    "account_required",
+    "name_taken",
+    "weak_password",
+    "signup_closed",
+    "session_expired",
+    "too_many_attempts",
+    "kicked",
+    "banned",
+    "password_reset",
+];
 
 pub const FEATURE_ATTACHMENTS: &str = "attachments";
 
@@ -365,6 +513,90 @@ mod tests {
         })
         .unwrap();
         assert!(s.contains(r#""type":"error""#));
+    }
+
+    #[test]
+    fn hello_across_versions() {
+        // What 0.2–0.5 apps send still parses, as a sign-in without accounts.
+        let old: ClientMsg =
+            serde_json::from_str(r#"{"type":"hello","name":"Sam","password":"pw","version":1}"#)
+                .unwrap();
+        assert!(matches!(
+            old,
+            ClientMsg::Hello {
+                accounts: false,
+                auth: None,
+                ..
+            }
+        ));
+
+        // What new apps send is still readable by servers that only know the old fields.
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "camelCase")]
+        enum OldClientMsg {
+            Hello {
+                name: String,
+                password: String,
+                version: u32,
+            },
+        }
+        let new = ClientMsg::Hello {
+            name: "Sam".into(),
+            password: "group".into(),
+            version: PROTOCOL_VERSION,
+            accounts: true,
+            auth: Some(Auth::Register {
+                new_password: "mine".into(),
+            }),
+        };
+        let json = serde_json::to_string(&new).unwrap();
+        assert!(json.contains(r#""auth":{"kind":"register","newPassword":"mine"}"#));
+        let OldClientMsg::Hello {
+            name,
+            password,
+            version,
+        } = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            (name.as_str(), password.as_str(), version),
+            ("Sam", "group", 1)
+        );
+
+        let admin: ClientMsg = serde_json::from_str(
+            r#"{"type":"admin","action":{"do":"setAdmin","account":3,"admin":true}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            admin,
+            ClientMsg::Admin {
+                action: AdminAction::SetAdmin {
+                    account: 3,
+                    admin: true
+                }
+            }
+        ));
+    }
+
+    #[test]
+    fn welcome_from_older_servers() {
+        // A 0.5 server's Welcome has no account fields.
+        let json = r#"{"type":"welcome","id":4,"name":"Sam","appName":"Backroom","textChannels":["general"],
+            "voiceChannels":["Lounge"],"maxPerVoiceChannel":8,"history":{},"voiceState":[
+            {"name":"Lounge","members":[{"id":4,"name":"Sam","muted":false,"deafened":false}]}],
+            "users":[{"id":4,"name":"Sam"}],"features":["attachments"],"maxAttachmentBytes":1}"#;
+        let ServerMsg::Welcome {
+            account,
+            token,
+            must_change_password,
+            users,
+            voice_state,
+            ..
+        } = serde_json::from_str(json).unwrap()
+        else {
+            panic!("not a welcome")
+        };
+        assert!(account.is_none() && token.is_none() && !must_change_password);
+        assert_eq!(users[0].account, None);
+        assert_eq!(voice_state[0].members[0].account, None);
     }
 }
 

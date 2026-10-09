@@ -2,6 +2,16 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.6.0
+
+- Accounts: everyone signs in with their own name and password, and nobody else can use their name. The group password is now only needed once, to create an account. If you used Backroom before, the app fills in your name and the group password; just pick a password.
+- "Keep me signed in" saves a sign-in key instead of a password.
+- Rename yourself or change your password in Settings.
+- Admins can kick, ban and reset passwords: click someone's name, or use Settings → People. To become the first admin, type `admin <your name>` in the server window.
+- Older apps can't sign in to this server. They're asked to update.
+- Bans and the wrong-password limit go by each person's real internet address: only a proxy on the server's own PC (like the Cloudflare tunnel) can pass one along.
+- Fixed the Settings window stretching across the screen when the update check failed (for example, when offline).
+
 ## 0.5.0
 
 - The server updates itself: it downloads and checks the new version, then restarts once nobody is in voice. The app shows "The server is updating…" and reconnects on its own. Type `update` in the server window to do it right away. (This one server update, from 0.4.0 or earlier, still has to be done by hand.)

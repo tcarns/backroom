@@ -21,6 +21,8 @@ pub struct Config {
     pub check_updates: bool,
     /// Install new versions by itself and restart when nobody's in voice.
     pub auto_update: bool,
+    /// New accounts can be created (with the group password).
+    pub allow_signup: bool,
     /// Largest image someone can send.
     pub max_attachment_bytes: u64,
     pub config_path: PathBuf,
@@ -44,6 +46,7 @@ struct FileConfig {
     log_file: Option<String>,
     check_updates: Option<bool>,
     auto_update: Option<bool>,
+    allow_signup: Option<bool>,
     max_attachment_mb: Option<u64>,
 }
 
@@ -54,7 +57,7 @@ fn base_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-fn random_password() -> String {
+pub fn random_password() -> String {
     // Easy to read aloud: no 0/O or 1/l.
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut bytes = [0u8; 10];
@@ -69,8 +72,13 @@ fn default_file(password: &str) -> String {
     format!(
         r#"# Backroom server settings. Restart the server after changing anything here.
 
-# Everyone needs this to join. Leave it empty ("") to let anyone with the address in.
+# Group password: people need it once, to create their account. After that they
+# sign in with their own name and password. Leave it empty ("") to let anyone with
+# the address create an account.
 password = "{password}"
+
+# Set to false to stop new accounts being created (once everyone has one).
+allow_signup = true
 
 port = 3000
 app_name = "Backroom"
@@ -269,6 +277,11 @@ pub fn load() -> Config {
         None => file.auto_update.unwrap_or(true),
     };
 
+    let allow_signup = match env("ALLOW_SIGNUP") {
+        Some(v) => !["0", "false", "no", "off"].contains(&v.to_lowercase().as_str()),
+        None => file.allow_signup.unwrap_or(true),
+    };
+
     let max_attachment_mb = parse_num("MAX_ATTACHMENT_MB", env("MAX_ATTACHMENT_MB"), &mut notes)
         .map(|n| n as u64)
         .or(file.max_attachment_mb)
@@ -279,6 +292,7 @@ pub fn load() -> Config {
         max_attachment_bytes: max_attachment_mb * 1024 * 1024,
         check_updates,
         auto_update,
+        allow_signup,
         port,
         host,
         password,

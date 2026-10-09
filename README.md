@@ -14,19 +14,22 @@ This version doesn't work with the old browser version. Everyone needs the app.
 ## Hosting the server
 
 1. Put `backroom-server.exe` in a folder of its own. It saves its settings, chat history and logs next to itself.
-2. Double-click it. The first time, it creates `backroom-server.toml` with a random group password and shows that password in the window. To change the password, edit that file and restart the server.
+2. Double-click it. The first time, it creates `backroom-server.toml` with a random group password and shows that password in the window. People need it once, to create their account. To change it, edit that file and restart the server.
 3. Keep the window open while people are using Backroom. If Windows asks whether to allow network access, allowing it on private networks is fine. Task Manager shows two `backroom-server.exe` entries: a tiny watcher and the server itself (see Updates). That's normal.
 4. To let friends connect from outside your home, start a Cloudflare tunnel in PowerShell, the same as before:
    ```powershell
    cloudflared tunnel --url http://localhost:3000
    ```
-5. Send your friends the `….trycloudflare.com` address and the password.
+5. Send your friends the `….trycloudflare.com` address and the group password.
+6. Create your own account in the app (see Joining), then type `admin <your name>` in the server window to make yourself an admin.
 
 ## Joining
 
 1. Run `backroom.exe`. The first time, Windows may say "Windows protected your PC", because the app isn't signed. Click **More info**, then **Run anyway**.
 2. **Server address:** the `….trycloudflare.com` address (with or without `https://`). If you're on the computer running the server, `localhost:3000` also works.
-3. Enter your name and the group password, then click **Join**. With "Remember me" checked, it signs you in automatically next time.
+3. The first time, choose **Create account**: pick a name and a password of your own, and enter the group password. After that, use **Sign in** with your name and password. With "Keep me signed in" checked, Backroom signs you in by itself next time.
+
+If you used Backroom before accounts (0.5.0 or earlier), the app opens on **Create account** with your name and the group password already filled in. Just pick a password.
 
 Headphones are recommended. There's no echo cancellation yet, so speakers can feed other people's voices back into your mic.
 
@@ -54,13 +57,34 @@ Headphones are recommended. There's no echo cancellation yet, so speakers can fe
 
 The app's settings are saved in `%APPDATA%\Backroom\settings.json`.
 
+## Accounts
+
+Everyone has their own account: a name nobody else can take, and their own password. The group password is only needed to create an account.
+
+- **Your account** (Settings, at the bottom): rename yourself, change your password, or sign out. Changing your password signs you out on your other computers.
+- **Keep me signed in** saves a sign-in key from the server in `settings.json`, not your password. Signing out deletes the key on the server too, so a copied `settings.json` stops working. Keys you don't use for 180 days expire.
+- **Volume and "mute for me"** follow people when they rename.
+
+**Admins** can manage people from the app. Click someone's name (in a voice channel or under Online) for **Kick**, **Reset password** and **Ban**. Settings → People lists every account, including offline ones, with the same actions plus **Unban** and **Make admin**.
+- **Kick** disconnects someone. They can sign back in.
+- **Ban** disconnects them and stops them signing in. They also can't create a new account from the same internet address.
+- **Reset password** signs them out everywhere and gives you a temporary password to send them. They choose a new one when they sign in.
+- There's always at least one admin, and admins can't be banned until their admin is removed.
+
+The same things work from the server window: `users`, `admin <name>`, `unadmin <name>`, `kick <name>`, `ban <name>`, `unban <name>`, `resetpw <name>` and `deluser <name>`. Deleting an account frees its name. Someone who forgets their password: `resetpw <name>`.
+
+Accounts are saved in `data\accounts.json`. Passwords are stored only as Argon2 hashes, and sign-in keys only as SHA-256 hashes, so the file can't be used to sign in as anyone. Still, keep it private and include it in backups. To stop new accounts once everyone has one, set `allow_signup = false`.
+
+Ten wrong passwords from one address in ten minutes make it wait. Wrong passwords are logged.
+
 ## Server settings
 
 Edit `backroom-server.toml` next to the server, then restart it:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `password` | random | Group password. `""` lets anyone with the address in. |
+| `password` | random | Group password, needed to create an account. `""` lets anyone with the address create one. |
+| `allow_signup` | `true` | `false` stops new accounts being created |
 | `port` | `3000` | Port to listen on |
 | `app_name` | `Backroom` | Name shown in the app |
 | `text_channels` | `["general", "links", "memes"]` | Text channels |
@@ -77,7 +101,7 @@ Environment variables with the same names in capitals (`PASSWORD`, `PORT`, `LOG_
 
 Images are saved in `data\attachments`. They're deleted automatically when their message ages out of the chat history.
 
-**Mixing versions:** all apps and servers from 0.2.0 on work together, so it doesn't matter who updates first. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out). A 0.2.0 app on a 0.3.0 server shows messages without their images.
+**Mixing versions:** a server with accounts (0.6.0 and later) needs apps from 0.6.0 on. Older apps are told to close, reopen and click **Update now**. Apps from 0.6.0 still work with older servers, signing in with the group password. Between 0.2.0 and 0.5.0, any app works with any server. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out), and a 0.2.0 app on a 0.3.0 server shows messages without their images.
 
 **Keeping your old chat history:** the history format is the same as the browser version's. Copy the old `data\messages.json` into the `data` folder next to `backroom-server.exe` before starting it.
 
@@ -89,8 +113,8 @@ Everything is logged to the server window and to `data\backroom.log`. When the l
 | --- | --- |
 | `trace` | When each person starts and stops talking |
 | `debug` | Chat activity (who posted where, never what they said), mute and deafen, ignored messages |
-| `info` | Sign-ins, disconnects, voice joins, leaves and moves |
-| `warn` | Wrong passwords, mic or speaker problems on someone's computer, audio breaking up, people sending too fast |
+| `info` | Sign-ins, new accounts, renames, disconnects, voice joins, leaves and moves |
+| `warn` | Wrong passwords, admin actions (kicks, bans, password resets), mic or speaker problems on someone's computer, audio breaking up, people sending too fast |
 | `error` | App errors reported by someone's computer, saving problems |
 | `critical` | The server crashing or failing to start |
 
@@ -102,6 +126,7 @@ Type these into the server window to change things while it runs:
 | `level debug` | Switch to that level right away (any level name works) |
 | `status` | Who's online and in voice, uptime and the server's memory use |
 | `update` | Check for a new version now, install it and restart right away |
+| `users`, `admin`, `kick`, `ban`, `resetpw` … | Manage accounts (see Accounts) |
 | `help` | List the commands |
 
 The app reports problems only it can see, so they show up in your server log:

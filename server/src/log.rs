@@ -116,6 +116,17 @@ pub fn file_path() -> Option<PathBuf> {
     FILE.lock().unwrap().as_ref().map(|s| s.path.clone())
 }
 
+/// "2026-10-09 14:05" in the server's time zone, from milliseconds since 1970.
+pub fn local_time(ms: u64) -> String {
+    chrono::DateTime::from_timestamp_millis(ms as i64)
+        .map(|t| {
+            t.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "?".into())
+}
+
 pub fn write(l: Level, category: &str, message: &str, force: bool) {
     if !force && !enabled(l) {
         return;
