@@ -35,6 +35,13 @@ Headphones are recommended. There's no echo cancellation yet, so speakers can fe
 - **Join voice:** click a voice channel. Leave with the red phone button.
 - **Mute and deafen:** the mic and headphone buttons at the bottom left.
 - **Someone too loud or too quiet:** click their name in the voice channel to set their volume (up to 200%) or mute them just for you. This is remembered.
+- **Emoji:** type shortcuts like `:)` `:D` `;)` `<3` `:P`, or codes like `:fire:` `:joy:` `:thumbsup:` `:skull:` `:100:`. They turn into emoji when you send. The ☺ button in the message box opens a picker. Emoji are drawn in black and white: the app's text engine can't draw color emoji.
+- **Images:** three ways to attach one:
+  - click **+** in the message box
+  - drag an image onto the window
+  - paste one with Ctrl+V (a screenshot from Win+Shift+S works too)
+
+  You can attach up to 4 at once and add a caption. Big photos are shrunk to 2048 pixels before sending, so they upload quickly. Click an image in the chat to see it full size; **Open in photo viewer** opens it in your usual app.
 - **Settings** (the sliders button):
   - **Mic and speakers:** pick devices and use the mic meter to test your microphone.
   - **When to send your voice:**
@@ -42,6 +49,7 @@ Headphones are recommended. There's no echo cancellation yet, so speakers can fe
     - **Push to talk:** any key or mouse button 4/5 works, even while a game is in front.
   - **Noise suppression:** removes background noise like fans and keyboard clicks.
   - **Join, leave and message sounds:** turn the chimes on or off.
+  - **Theme:** Plum, Midnight, Light, Cream, Pastel pink or Mint. Every theme is checked for readable contrast.
   - **Memory:** shows how much memory Backroom is using.
 
 The app's settings are saved in `%APPDATA%\Backroom\settings.json`.
@@ -59,10 +67,15 @@ Edit `backroom-server.toml` next to the server, then restart it:
 | `voice_channels` | `["Lounge", "Gaming", "Quiet room"]` | Voice channels |
 | `max_per_voice_channel` | `8` | Most people in one voice channel |
 | `history_limit` | `300` | Messages kept per text channel |
+| `max_attachment_mb` | `8` | Largest image people can send |
 | `log_level` | `info` | How much to log |
 | `log_file` | `data/backroom.log` | Log file. `""` logs to the window only. |
 
 Environment variables with the same names in capitals (`PASSWORD`, `PORT`, `LOG_LEVEL` and so on) override the file. These are the same names the old Node version used.
+
+Images are saved in `data\attachments`. They're deleted automatically when their message ages out of the chat history.
+
+**Mixing versions:** apps and servers from 0.2.0 and 0.3.0 work together. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out). A 0.2.0 app on a 0.3.0 server shows messages without their images.
 
 **Keeping your old chat history:** the history format is the same as the browser version's. Copy the old `data\messages.json` into the `data` folder next to `backroom-server.exe` before starting it.
 

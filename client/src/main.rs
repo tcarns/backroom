@@ -1,38 +1,33 @@
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod attach;
+mod theme;
+
+use attach::{Attachments, ImgState};
 use backroom::audio::{self, DeviceList};
 use backroom::keys::{self, GlobalKeys};
 use backroom::net::{self, Net, NetEvent, Wake};
 use backroom::settings::Settings;
 use backroom::voice::{chime, Mixer, VoiceControls};
+use backroom::{emoji, images};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText,
     Sense, Stroke, Vec2,
 };
 use parking_lot::Mutex;
 use proto::update::{self as updates, Release};
-use proto::{ChatMessage, ClientMsg, ServerMsg, User, VoiceChannelState};
+use proto::{
+    Attachment, ChatMessage, ClientMsg, ServerMsg, UploadHeader, User, VoiceChannelState,
+    FEATURE_ATTACHMENTS,
+};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use theme::pal;
 
 // ---------------------------------------------------------------- palette
-
-const BG_DEEP: Color32 = Color32::from_rgb(23, 17, 30);
-const BG: Color32 = Color32::from_rgb(31, 24, 40);
-const RAISED: Color32 = Color32::from_rgb(42, 33, 53);
-const RAISED_2: Color32 = Color32::from_rgb(52, 41, 66);
-const LINE: Color32 = Color32::from_rgb(58, 46, 71);
-const ME_BG: Color32 = Color32::from_rgb(20, 15, 26);
-const TEXT: Color32 = Color32::from_rgb(239, 232, 244);
-const MUTED: Color32 = Color32::from_rgb(163, 150, 177);
-const FAINT: Color32 = Color32::from_rgb(122, 109, 137);
-const AMBER: Color32 = Color32::from_rgb(244, 184, 96);
-const AMBER_INK: Color32 = Color32::from_rgb(43, 27, 6);
-const RED: Color32 = Color32::from_rgb(236, 102, 118);
-const TEAL: Color32 = Color32::from_rgb(116, 209, 176);
 
 fn main() -> eframe::Result {
     let settings = Settings::load();
@@ -202,11 +197,18 @@ struct App {
     update: Arc<Mutex<UpdateState>>,
     update_auto_started: bool,
     update_dismissed: Option<String>,
+    att: Attachments,
+    emoji_open: bool,
+    last_paste: Option<Instant>,
+    v_press_seen: bool,
+    emoji_anchor: egui::Rect,
+    emoji_opened_frame: u64,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, s: Settings) -> Self {
-        setup_style(&cc.egui_ctx);
+        theme::apply(&cc.egui_ctx, &s.theme);
+        emoji::install_font(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
         let wake: Wake = Arc::new(move || ctx.request_repaint());
         let mixer = Arc::new(Mutex::new(Mixer::default()));
@@ -214,6 +216,7 @@ impl App {
         let net = Net::spawn(mixer.clone(), wake.clone());
         let keys = GlobalKeys::start(ctl.clone(), wake.clone());
         let audio_error = Arc::new(Mutex::new(None));
+        let att = Attachments::new(wake.clone());
         let mut app = App {
             s,
             net,
@@ -248,6 +251,12 @@ impl App {
             update: Arc::new(Mutex::new(UpdateState::default())),
             update_auto_started: false,
             update_dismissed: None,
+            att,
+            emoji_open: false,
+            last_paste: None,
+            v_press_seen: false,
+            emoji_anchor: egui::Rect::NOTHING,
+            emoji_opened_frame: 0,
         };
         app.apply_voice_flags();
         if app.s.check_updates {
@@ -509,6 +518,7 @@ impl App {
                     );
                 }
                 NetEvent::Ping(ms) => self.ping = Some(ms),
+                NetEvent::Attachment { id, bytes } => self.att.on_data(id, bytes),
                 NetEvent::Server(msg) => self.handle_server(ctx, msg),
             }
         }
@@ -526,8 +536,14 @@ impl App {
                 history,
                 voice_state,
                 users,
+                features,
+                max_attachment_bytes,
             } => {
                 let first = self.session.is_none();
+                self.att.server_supports = features.iter().any(|f| f == FEATURE_ATTACHMENTS);
+                if max_attachment_bytes > 0 {
+                    self.att.max_bytes = max_attachment_bytes;
+                }
                 if !text_channels.contains(&self.current_text) {
                     self.current_text = self
                         .s
@@ -575,6 +591,8 @@ impl App {
                     .entry(channel.clone())
                     .or_default()
                     .push(message);
+                // The chat sticks to the bottom one frame later; make sure that frame happens.
+                ctx.request_repaint();
                 if channel != self.current_text && !mine {
                     self.unread.insert(channel);
                 }
@@ -632,6 +650,7 @@ impl App {
                 self.show_banner(message, true, Some(5));
             }
             ServerMsg::Pong { .. } => {}
+            ServerMsg::AttachmentGone { id } => self.att.gone(&id),
         }
     }
 
@@ -685,66 +704,6 @@ impl App {
 }
 
 // ---------------------------------------------------------------- drawing helpers
-
-fn setup_style(ctx: &egui::Context) {
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = BG;
-    v.window_fill = BG;
-    v.extreme_bg_color = BG_DEEP;
-    v.faint_bg_color = RAISED;
-    v.code_bg_color = RAISED;
-    v.hyperlink_color = AMBER;
-    v.selection.bg_fill = Color32::from_rgb(110, 80, 40);
-    v.selection.stroke = Stroke::new(1.0, AMBER);
-    v.window_stroke = Stroke::new(1.0, LINE);
-    v.window_corner_radius = CornerRadius::same(14);
-    v.window_shadow = egui::Shadow {
-        offset: [0, 10],
-        blur: 30,
-        spread: 0,
-        color: Color32::from_black_alpha(110),
-    };
-    v.popup_shadow = egui::Shadow {
-        offset: [0, 6],
-        blur: 18,
-        spread: 0,
-        color: Color32::from_black_alpha(100),
-    };
-    v.override_text_color = Some(TEXT);
-    let w = &mut v.widgets;
-    w.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-    w.noninteractive.fg_stroke = Stroke::new(1.0, MUTED);
-    for (st, fill) in [
-        (&mut w.inactive, RAISED_2),
-        (&mut w.hovered, LINE),
-        (&mut w.active, LINE),
-        (&mut w.open, RAISED_2),
-    ] {
-        st.weak_bg_fill = fill;
-        st.bg_fill = fill;
-        st.corner_radius = CornerRadius::same(5);
-        st.bg_stroke = Stroke::NONE;
-    }
-    w.inactive.fg_stroke = Stroke::new(1.0, TEXT);
-    w.hovered.fg_stroke = Stroke::new(1.0, TEXT);
-    w.active.fg_stroke = Stroke::new(1.0, TEXT);
-    w.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(90, 72, 108));
-    ctx.set_visuals(v);
-
-    ctx.style_mut(|s| {
-        use egui::TextStyle::*;
-        s.text_styles.insert(Body, FontId::proportional(15.0));
-        s.text_styles.insert(Button, FontId::proportional(15.0));
-        s.text_styles.insert(Small, FontId::proportional(12.0));
-        s.text_styles.insert(Heading, FontId::proportional(21.0));
-        s.text_styles.insert(Monospace, FontId::monospace(14.0));
-        s.spacing.item_spacing = egui::vec2(8.0, 6.0);
-        s.spacing.button_padding = egui::vec2(12.0, 6.0);
-        s.spacing.interact_size.y = 30.0;
-        s.spacing.slider_width = 220.0;
-        s.visuals.slider_trailing_fill = true;
-    });
-}
 
 fn hsl(h: f32, s: f32, l: f32) -> Color32 {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
@@ -800,12 +759,8 @@ fn paint_avatar(
     ring_bg: Color32,
 ) {
     if speaking {
-        painter.circle_filled(
-            center,
-            radius + 6.0,
-            Color32::from_rgba_unmultiplied(244, 184, 96, 40),
-        );
-        painter.circle_filled(center, radius + 4.0, AMBER);
+        painter.circle_filled(center, radius + 6.0, theme::with_alpha(pal().accent, 46));
+        painter.circle_filled(center, radius + 4.0, pal().accent);
         painter.circle_filled(center, radius + 2.0, ring_bg);
     }
     painter.circle_filled(center, radius, avatar_color(name));
@@ -829,9 +784,9 @@ fn icon_button(
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), Sense::click());
     let p = ui.painter();
     if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(9), RAISED_2);
+        p.rect_filled(rect, CornerRadius::same(9), pal().raised_2);
     }
-    let c = if crossed { RED } else { color };
+    let c = if crossed { pal().red } else { color };
     p.text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -845,7 +800,7 @@ fn icon_button(
                 rect.center() + egui::vec2(-9.0, -9.0),
                 rect.center() + egui::vec2(9.0, 9.0),
             ],
-            Stroke::new(2.2, RED),
+            Stroke::new(2.2, pal().red),
         );
     }
     resp.on_hover_text(tip)
@@ -856,7 +811,7 @@ fn send_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), Sense::click());
     let p = ui.painter();
     if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(9), RAISED_2);
+        p.rect_filled(rect, CornerRadius::same(9), pal().raised_2);
     }
     let c = rect.center();
     let pts = vec![
@@ -865,41 +820,141 @@ fn send_button(ui: &mut egui::Ui) -> egui::Response {
         c + egui::vec2(-8.0, 7.0),
         c + egui::vec2(-5.0, 0.0),
     ];
-    p.add(egui::Shape::convex_polygon(pts, AMBER, Stroke::NONE));
+    p.add(egui::Shape::convex_polygon(pts, pal().accent, Stroke::NONE));
     resp.on_hover_text("Send (Enter)")
+}
+
+/// Round "+" button for attaching an image. Drawn by hand so it doesn't depend on font glyphs.
+fn attach_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(
+        egui::vec2(36.0, 36.0),
+        if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        },
+    );
+    let p = ui.painter();
+    let c = rect.center();
+    let color = if !enabled {
+        theme::mix(pal().muted, pal().raised, 0.5)
+    } else if resp.hovered() {
+        pal().text
+    } else {
+        pal().muted
+    };
+    p.circle_filled(
+        c,
+        11.0,
+        if resp.hovered() && enabled {
+            pal().raised_2
+        } else {
+            Color32::TRANSPARENT
+        },
+    );
+    p.circle_stroke(c, 10.0, Stroke::new(1.6, color));
+    p.line_segment(
+        [c + egui::vec2(-4.5, 0.0), c + egui::vec2(4.5, 0.0)],
+        Stroke::new(1.8, color),
+    );
+    p.line_segment(
+        [c + egui::vec2(0.0, -4.5), c + egui::vec2(0.0, 4.5)],
+        Stroke::new(1.8, color),
+    );
+    resp
 }
 
 fn close_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::click());
     let p = ui.painter();
     if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(6), LINE);
+        p.rect_filled(rect, CornerRadius::same(6), pal().line);
     }
     let c = rect.center();
-    let s = Stroke::new(1.6, MUTED);
+    let s = Stroke::new(1.6, pal().muted);
     p.line_segment([c + egui::vec2(-4.5, -4.5), c + egui::vec2(4.5, 4.5)], s);
     p.line_segment([c + egui::vec2(4.5, -4.5), c + egui::vec2(-4.5, 4.5)], s);
     resp.on_hover_text("Dismiss")
+}
+
+/// A small preview card for a theme: sidebar and chat colors, accent dot, sample text lines.
+fn theme_swatch(ui: &mut egui::Ui, t: &theme::Palette, selected: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(58.0, 62.0), Sense::click());
+    let p = ui.painter();
+    let card = egui::Rect::from_min_size(rect.min, egui::vec2(58.0, 40.0));
+    let r = 8u8;
+    p.rect_filled(card, CornerRadius::same(r), t.bg_deep);
+    let right = egui::Rect::from_min_max(egui::pos2(card.left() + 20.0, card.top()), card.max);
+    p.rect_filled(
+        right,
+        CornerRadius {
+            nw: 0,
+            sw: 0,
+            ne: r,
+            se: r,
+        },
+        t.bg,
+    );
+    p.circle_filled(card.left_center() + egui::vec2(11.0, 0.0), 5.5, t.accent);
+    let line = |y: f32, w: f32, c: Color32| {
+        p.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(right.left() + 7.0, card.top() + y),
+                egui::vec2(w, 3.0),
+            ),
+            CornerRadius::same(1),
+            c,
+        );
+    };
+    line(10.0, 24.0, t.text);
+    line(18.0, 18.0, t.muted);
+    line(26.0, 20.0, t.text);
+    let border = if selected {
+        Stroke::new(2.0, pal().accent)
+    } else if resp.hovered() {
+        Stroke::new(1.0, pal().muted)
+    } else {
+        Stroke::new(1.0, pal().line)
+    };
+    p.rect_stroke(
+        card,
+        CornerRadius::same(r),
+        border,
+        egui::StrokeKind::Outside,
+    );
+    p.text(
+        egui::pos2(card.center().x, card.bottom() + 12.0),
+        Align2::CENTER_CENTER,
+        t.label,
+        FontId::proportional(12.0),
+        if selected { pal().text } else { pal().muted },
+    );
+    resp.on_hover_text(t.label)
 }
 
 fn section_title(ui: &mut egui::Ui, text: &str) {
     ui.add_space(14.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        ui.label(RichText::new(text).size(13.0).color(FAINT).strong());
+        ui.label(RichText::new(text).size(13.0).color(pal().faint).strong());
     });
     ui.add_space(2.0);
 }
 
 fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
-    let btn = egui::Button::new(RichText::new(text).color(AMBER_INK).strong().size(15.0))
-        .fill(if enabled {
-            AMBER
-        } else {
-            Color32::from_rgb(150, 118, 70)
-        })
-        .corner_radius(CornerRadius::same(10))
-        .min_size(egui::vec2(ui.available_width(), 40.0));
+    let btn = egui::Button::new(
+        RichText::new(text)
+            .color(pal().accent_ink)
+            .strong()
+            .size(15.0),
+    )
+    .fill(if enabled {
+        pal().accent
+    } else {
+        theme::mix(pal().accent, pal().bg, 0.45)
+    })
+    .corner_radius(CornerRadius::same(10))
+    .min_size(egui::vec2(ui.available_width(), 40.0));
     ui.add_enabled(enabled, btn)
 }
 
@@ -934,7 +989,7 @@ fn time_label(ts: u64) -> String {
 fn message_text(ui: &mut egui::Ui, text: &str) {
     for line in text.split('\n') {
         if !line.contains("http://") && !line.contains("https://") {
-            ui.add(egui::Label::new(RichText::new(line).color(TEXT)).wrap());
+            ui.add(egui::Label::new(RichText::new(line).color(pal().text)).wrap());
             continue;
         }
         ui.horizontal_wrapped(|ui| {
@@ -951,19 +1006,19 @@ fn message_text(ui: &mut egui::Ui, text: &str) {
                         let mut url = &rest[..end];
                         url = url.trim_end_matches(|c: char| ").,!?;:'\"]".contains(c));
                         if url.len() <= 8 {
-                            ui.label(RichText::new(&rest[..end]).color(TEXT));
+                            ui.label(RichText::new(&rest[..end]).color(pal().text));
                             rest = &rest[end..];
                             continue;
                         }
-                        ui.hyperlink_to(RichText::new(url).color(AMBER), url);
+                        ui.hyperlink_to(RichText::new(url).color(pal().accent), url);
                         rest = &rest[url.len()..];
                     }
                     Some(i) => {
-                        ui.label(RichText::new(&rest[..i]).color(TEXT));
+                        ui.label(RichText::new(&rest[..i]).color(pal().text));
                         rest = &rest[i..];
                     }
                     None => {
-                        ui.label(RichText::new(rest).color(TEXT));
+                        ui.label(RichText::new(rest).color(pal().text));
                         rest = "";
                     }
                 }
@@ -977,14 +1032,14 @@ fn message_text(ui: &mut egui::Ui, text: &str) {
 impl App {
     fn login_screen(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(BG_DEEP))
+            .frame(Frame::new().fill(pal().bg_deep))
             .show(ctx, |ui| {
                 let card_h = 470.0;
                 ui.add_space(((ui.available_height() - card_h) / 2.0).max(16.0));
                 ui.vertical_centered(|ui| {
                     Frame::new()
-                        .fill(BG)
-                        .stroke(Stroke::new(1.0, LINE))
+                        .fill(pal().bg)
+                        .stroke(Stroke::new(1.0, pal().line))
                         .corner_radius(CornerRadius::same(16))
                         .inner_margin(Margin::same(28))
                         .show(ui, |ui| {
@@ -999,12 +1054,17 @@ impl App {
                                         egui::pos2(x, rect.center().y - h / 2.0),
                                         egui::pos2(x + 8.0, rect.center().y + h / 2.0),
                                     );
-                                    ui.painter().rect_filled(r, CornerRadius::same(4), AMBER);
+                                    ui.painter().rect_filled(
+                                        r,
+                                        CornerRadius::same(4),
+                                        pal().accent,
+                                    );
                                 }
                                 ui.add_space(6.0);
                                 ui.label(RichText::new("Backroom").size(26.0).strong());
                                 ui.label(
-                                    RichText::new("Voice and chat for the group.").color(MUTED),
+                                    RichText::new("Voice and chat for the group.")
+                                        .color(pal().muted),
                                 );
                                 ui.add_space(12.0);
 
@@ -1015,14 +1075,16 @@ impl App {
                                     ("Your name", "", 1, false),
                                     ("Group password", "", 2, true),
                                 ] {
-                                    ui.label(RichText::new(label).size(13.0).color(MUTED).strong());
+                                    ui.label(
+                                        RichText::new(label).size(13.0).color(pal().muted).strong(),
+                                    );
                                     let value = match field {
                                         0 => &mut self.s.server,
                                         1 => &mut self.s.name,
                                         _ => &mut self.s.password,
                                     };
                                     let edit = egui::TextEdit::singleline(value)
-                                        .hint_text(RichText::new(hint).color(FAINT))
+                                        .hint_text(RichText::new(hint).color(pal().faint))
                                         .password(secret)
                                         .desired_width(f32::INFINITY)
                                         .margin(Margin::symmetric(10, 8))
@@ -1037,8 +1099,10 @@ impl App {
                                 ui.add_space(4.0);
                                 if let Some(err) = &self.login_error {
                                     ui.add(
-                                        egui::Label::new(RichText::new(err).color(RED).size(13.0))
-                                            .wrap(),
+                                        egui::Label::new(
+                                            RichText::new(err).color(pal().red).size(13.0),
+                                        )
+                                        .wrap(),
                                     );
                                     ui.add_space(4.0);
                                 }
@@ -1063,9 +1127,12 @@ impl App {
                             ui.add_space((ui.available_width() - 330.0).max(0.0) / 2.0);
                             ui.label(
                                 RichText::new(format!("Backroom {} is available.", r.version))
-                                    .color(MUTED),
+                                    .color(pal().muted),
                             );
-                            ui.hyperlink_to(RichText::new("Download it").color(AMBER), &r.url);
+                            ui.hyperlink_to(
+                                RichText::new("Download it").color(pal().accent),
+                                &r.url,
+                            );
                         });
                     }
                 });
@@ -1085,6 +1152,9 @@ impl App {
         self.sidebar(ctx, &speaking);
         self.chat(ctx);
         self.volume_popup(ctx);
+        self.emoji_picker(ctx);
+        self.image_viewer(ctx);
+        self.drop_overlay(ctx);
         if self.settings_open {
             self.settings_window(ctx);
         }
@@ -1094,11 +1164,11 @@ impl App {
         egui::SidePanel::left("sidebar")
             .exact_width(270.0)
             .resizable(false)
-            .frame(Frame::new().fill(BG_DEEP))
+            .frame(Frame::new().fill(pal().bg_deep))
             .show(ctx, |ui| {
                 // Bottom: voice connection + me.
                 egui::TopBottomPanel::bottom("me")
-                    .frame(Frame::new().fill(ME_BG).inner_margin(Margin {
+                    .frame(Frame::new().fill(pal().me_bg).inner_margin(Margin {
                         left: 12,
                         right: 8,
                         top: 8,
@@ -1142,9 +1212,9 @@ impl App {
         let (rect, resp) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
         let fill = if selected {
-            RAISED_2
+            pal().raised_2
         } else if resp.hovered() {
-            RAISED
+            pal().raised
         } else {
             Color32::TRANSPARENT
         };
@@ -1169,9 +1239,13 @@ impl App {
                 Align2::LEFT_CENTER,
                 "#",
                 FontId::proportional(16.0),
-                FAINT,
+                pal().faint,
             );
-            let color = if selected || unread { TEXT } else { MUTED };
+            let color = if selected || unread {
+                pal().text
+            } else {
+                pal().muted
+            };
             let font = if unread {
                 FontId::new(15.0, egui::FontFamily::Proportional)
             } else {
@@ -1185,7 +1259,7 @@ impl App {
                 color,
             );
             if unread {
-                p.circle_filled(rect.right_center() - egui::vec2(12.0, 0.0), 3.5, TEXT);
+                p.circle_filled(rect.right_center() - egui::vec2(12.0, 0.0), 3.5, pal().text);
             }
             if resp.clicked() {
                 select_text = Some(ch.clone());
@@ -1203,14 +1277,14 @@ impl App {
                 Align2::LEFT_CENTER,
                 "🔊",
                 FontId::proportional(14.0),
-                if here { AMBER } else { FAINT },
+                if here { pal().accent } else { pal().faint },
             );
             p.text(
                 rect.left_center() + egui::vec2(32.0, 0.0),
                 Align2::LEFT_CENTER,
                 ch,
                 FontId::proportional(15.0),
-                if here { TEXT } else { MUTED },
+                if here { pal().text } else { pal().muted },
             );
             if members.len() >= sess.max_per_voice {
                 p.text(
@@ -1218,7 +1292,7 @@ impl App {
                     Align2::RIGHT_CENTER,
                     "Full",
                     FontId::proportional(12.0),
-                    FAINT,
+                    pal().faint,
                 );
             }
             if self.joining.as_deref() == Some(ch.as_str()) {
@@ -1227,7 +1301,7 @@ impl App {
                     Align2::RIGHT_CENTER,
                     "Joining…",
                     FontId::proportional(12.0),
-                    AMBER,
+                    pal().accent,
                 );
             }
             let resp = resp.on_hover_text(if here {
@@ -1251,7 +1325,7 @@ impl App {
                         11.0,
                         &m.name,
                         talking,
-                        BG_DEEP,
+                        pal().bg_deep,
                     );
                     let label = if is_me {
                         format!("{} (you)", m.name)
@@ -1260,11 +1334,11 @@ impl App {
                     };
                     let locally_muted = !is_me && self.s.local_mutes.contains(&m.name);
                     let color = if talking {
-                        AMBER
+                        pal().accent
                     } else if locally_muted {
-                        FAINT
+                        pal().faint
                     } else {
-                        MUTED
+                        pal().muted
                     };
                     p.text(
                         rect.left_center() + egui::vec2(38.0, 0.0),
@@ -1282,11 +1356,11 @@ impl App {
                             Align2::CENTER_CENTER,
                             glyph,
                             FontId::proportional(12.0),
-                            RED,
+                            pal().red,
                         );
                         p.line_segment(
                             [c + egui::vec2(-6.0, -6.0), c + egui::vec2(6.0, 6.0)],
-                            Stroke::new(1.5, RED),
+                            Stroke::new(1.5, pal().red),
                         );
                         x -= 18.0;
                     };
@@ -1325,15 +1399,15 @@ impl App {
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), Sense::hover());
             let p = ui.painter();
             let c = rect.left_center() + egui::vec2(20.0, 0.0);
-            paint_avatar(p, c, 11.0, name, false, BG_DEEP);
-            p.circle_filled(c + egui::vec2(8.0, 8.0), 5.0, BG_DEEP);
-            p.circle_filled(c + egui::vec2(8.0, 8.0), 3.5, TEAL);
+            paint_avatar(p, c, 11.0, name, false, pal().bg_deep);
+            p.circle_filled(c + egui::vec2(8.0, 8.0), 5.0, pal().bg_deep);
+            p.circle_filled(c + egui::vec2(8.0, 8.0), 3.5, pal().teal);
             p.text(
                 rect.left_center() + egui::vec2(40.0, 0.0),
                 Align2::LEFT_CENTER,
                 name,
                 FontId::proportional(14.5),
-                MUTED,
+                pal().muted,
             );
         }
         ui.add_space(12.0);
@@ -1359,7 +1433,11 @@ impl App {
             ui.painter().circle_filled(
                 dot.center(),
                 4.5,
-                if peers_connecting { AMBER } else { TEAL },
+                if peers_connecting {
+                    pal().accent
+                } else {
+                    pal().teal
+                },
             );
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -1375,17 +1453,21 @@ impl App {
                     RichText::new(status)
                         .size(13.0)
                         .strong()
-                        .color(if peers_connecting { AMBER } else { TEAL }),
+                        .color(if peers_connecting {
+                            pal().accent
+                        } else {
+                            pal().teal
+                        }),
                 );
                 let ch = self
                     .voice_channel
                     .clone()
                     .or(self.joining.clone())
                     .unwrap_or_default();
-                ui.label(RichText::new(ch).size(13.0).color(MUTED));
+                ui.label(RichText::new(ch).size(13.0).color(pal().muted));
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if icon_button(ui, "📞", false, RED, "Leave voice").clicked() {
+                if icon_button(ui, "📞", false, pal().red, "Leave voice").clicked() {
                     self.leave_voice();
                 }
             });
@@ -1398,7 +1480,14 @@ impl App {
         let talking = speaking.contains(&sess.me_id);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), Sense::hover());
-            paint_avatar(ui.painter(), rect.center(), 15.0, &me_name, talking, ME_BG);
+            paint_avatar(
+                ui.painter(),
+                rect.center(),
+                15.0,
+                &me_name,
+                talking,
+                pal().me_bg,
+            );
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
@@ -1414,11 +1503,13 @@ impl App {
                 } else {
                     "Online".to_string()
                 };
-                ui.add(egui::Label::new(RichText::new(hint).size(12.0).color(FAINT)).truncate());
+                ui.add(
+                    egui::Label::new(RichText::new(hint).size(12.0).color(pal().faint)).truncate(),
+                );
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                if icon_button(ui, "⚙", false, MUTED, "Settings").clicked() {
+                if icon_button(ui, "⚙", false, pal().muted, "Settings").clicked() {
                     self.settings_open = !self.settings_open;
                 }
                 let deaf_tip = if self.s.deafened {
@@ -1426,7 +1517,7 @@ impl App {
                 } else {
                     "Deafen"
                 };
-                if icon_button(ui, "🎧", self.s.deafened, MUTED, deaf_tip).clicked() {
+                if icon_button(ui, "🎧", self.s.deafened, pal().muted, deaf_tip).clicked() {
                     self.toggle_deafen();
                 }
                 let muted = self.s.muted || self.s.deafened;
@@ -1434,7 +1525,7 @@ impl App {
                     ui,
                     "🎤",
                     muted,
-                    MUTED,
+                    pal().muted,
                     if muted { "Unmute" } else { "Mute" },
                 )
                 .clicked()
@@ -1447,7 +1538,7 @@ impl App {
 
     fn chat(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(BG))
+            .frame(Frame::new().fill(pal().bg))
             .show(ctx, |ui| {
                 egui::TopBottomPanel::top("chat_head")
                     .frame(Frame::new().inner_margin(Margin {
@@ -1458,7 +1549,7 @@ impl App {
                     }))
                     .show_inside(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("#").size(19.0).color(FAINT));
+                            ui.label(RichText::new("#").size(19.0).color(pal().faint));
                             ui.label(RichText::new(&self.current_text).size(18.0).strong());
                         });
                     });
@@ -1490,7 +1581,7 @@ impl App {
             return;
         }
         egui::TopBottomPanel::top("update_bar")
-            .frame(Frame::new().fill(RAISED_2).inner_margin(Margin {
+            .frame(Frame::new().fill(pal().raised_2).inner_margin(Margin {
                 left: 20,
                 right: 14,
                 top: 8,
@@ -1500,18 +1591,21 @@ impl App {
             .show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
-                    ui.painter().circle_filled(dot.center(), 4.5, AMBER);
+                    ui.painter().circle_filled(dot.center(), 4.5, pal().accent);
                     ui.label(
                         RichText::new(format!("Backroom {} is available.", r.version)).strong(),
                     );
-                    ui.label(RichText::new(format!("You have {}.", updates::CURRENT)).color(MUTED));
+                    ui.label(
+                        RichText::new(format!("You have {}.", updates::CURRENT)).color(pal().muted),
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("Later").clicked() {
                             self.update_dismissed = Some(r.version.clone());
                         }
-                        let btn =
-                            egui::Button::new(RichText::new("Download").color(AMBER_INK).strong())
-                                .fill(AMBER);
+                        let btn = egui::Button::new(
+                            RichText::new("Download").color(pal().accent_ink).strong(),
+                        )
+                        .fill(pal().accent);
                         let resp = ui.add(btn);
                         let resp = if r.notes.is_empty() {
                             resp
@@ -1527,6 +1621,25 @@ impl App {
     }
 
     fn messages(&mut self, ui: &mut egui::Ui) {
+        let mut want: Vec<Attachment> = Vec::new();
+        let mut open: Option<Attachment> = None;
+        self.message_list(ui, &mut want, &mut open);
+        let ppp = ui.ctx().pixels_per_point();
+        for a in want {
+            self.att.request(&a, ppp, &self.net);
+        }
+        if let Some(a) = open {
+            self.att.open_viewer(&a, &self.net);
+        }
+    }
+
+    fn message_list(
+        &self,
+        ui: &mut egui::Ui,
+        want: &mut Vec<Attachment>,
+        open: &mut Option<Attachment>,
+    ) {
+        let images_state = &self.att.images;
         let Some(sess) = &self.session else { return };
         let msgs = sess
             .history
@@ -1547,7 +1660,7 @@ impl App {
                                 "No messages in #{} yet. Write the first one.",
                                 self.current_text
                             ))
-                            .color(FAINT),
+                            .color(pal().faint),
                         );
                     });
                     return;
@@ -1564,8 +1677,11 @@ impl App {
                             let (rect, _) =
                                 ui.allocate_exact_size(egui::vec2(w, 18.0), Sense::hover());
                             let p = ui.painter();
-                            let galley =
-                                p.layout_no_wrap(day.clone(), FontId::proportional(12.0), FAINT);
+                            let galley = p.layout_no_wrap(
+                                day.clone(),
+                                FontId::proportional(12.0),
+                                pal().faint,
+                            );
                             let tw = galley.size().x + 24.0;
                             let y = rect.center().y;
                             p.line_segment(
@@ -1573,16 +1689,16 @@ impl App {
                                     egui::pos2(rect.left(), y),
                                     egui::pos2(rect.center().x - tw / 2.0, y),
                                 ],
-                                Stroke::new(1.0, LINE),
+                                Stroke::new(1.0, pal().line),
                             );
                             p.line_segment(
                                 [
                                     egui::pos2(rect.center().x + tw / 2.0, y),
                                     egui::pos2(rect.right(), y),
                                 ],
-                                Stroke::new(1.0, LINE),
+                                Stroke::new(1.0, pal().line),
                             );
-                            p.galley(rect.center() - galley.size() / 2.0, galley, FAINT);
+                            p.galley(rect.center() - galley.size() / 2.0, galley, pal().faint);
                         });
                         ui.add_space(6.0);
                     }
@@ -1600,19 +1716,84 @@ impl App {
                         ui.add_space(20.0);
                         let (rect, _) =
                             ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::hover());
-                        paint_avatar(ui.painter(), rect.center(), 19.0, &first.author, false, BG);
+                        paint_avatar(
+                            ui.painter(),
+                            rect.center(),
+                            19.0,
+                            &first.author,
+                            false,
+                            pal().bg,
+                        );
                         ui.add_space(6.0);
                         ui.vertical(|ui| {
                             ui.set_max_width((ui.available_width() - 20.0).min(760.0));
                             ui.spacing_mut().item_spacing.y = 3.0;
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&first.author).strong().color(TEXT));
+                                ui.label(RichText::new(&first.author).strong().color(pal().text));
                                 ui.label(
-                                    RichText::new(time_label(first.ts)).size(12.0).color(FAINT),
+                                    RichText::new(time_label(first.ts))
+                                        .size(12.0)
+                                        .color(pal().faint),
                                 );
                             });
                             for m in &msgs[i..j] {
-                                message_text(ui, &m.text);
+                                if !m.text.is_empty() {
+                                    message_text(ui, &m.text);
+                                }
+                                for a in &m.attachments {
+                                    let max = Vec2::new(
+                                        ui.available_width().min(attach::THUMB_MAX.x),
+                                        attach::THUMB_MAX.y,
+                                    );
+                                    let size = attach::display_size(a, max);
+                                    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+                                    let painter = ui.painter();
+                                    match images_state.get(&a.id) {
+                                        Some(ImgState::Ready(tex)) => {
+                                            egui::Image::new((tex.id(), size))
+                                                .corner_radius(CornerRadius::same(8))
+                                                .paint_at(ui, rect);
+                                        }
+                                        state => {
+                                            painter.rect_filled(
+                                                rect,
+                                                CornerRadius::same(8),
+                                                pal().raised,
+                                            );
+                                            painter.rect_stroke(
+                                                rect,
+                                                CornerRadius::same(8),
+                                                Stroke::new(1.0, pal().line),
+                                                egui::StrokeKind::Inside,
+                                            );
+                                            let label = match state {
+                                                Some(ImgState::Failed(msg)) => msg.as_str(),
+                                                _ => "Loading image…",
+                                            };
+                                            painter.text(
+                                                rect.center(),
+                                                Align2::CENTER_CENTER,
+                                                label,
+                                                FontId::proportional(13.0),
+                                                pal().faint,
+                                            );
+                                            if state.is_none() && ui.is_rect_visible(rect) {
+                                                want.push(a.clone());
+                                            }
+                                        }
+                                    }
+                                    let resp = resp
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                        .on_hover_text(format!(
+                                            "{} · {}",
+                                            a.name,
+                                            images::size_label(a.size)
+                                        ));
+                                    if resp.clicked() {
+                                        *open = Some(a.clone());
+                                    }
+                                    ui.add_space(4.0);
+                                }
                             }
                         });
                     });
@@ -1624,30 +1805,108 @@ impl App {
 
     fn composer(&mut self, ui: &mut egui::Ui) {
         let online = self.conn == Conn::Online;
+
+        // Images waiting to be sent.
+        if !self.att.pending.is_empty() || self.att.preparing > 0 {
+            let mut remove = None;
+            ui.horizontal_wrapped(|ui| {
+                for (i, p) in self.att.pending.iter().enumerate() {
+                    Frame::new()
+                        .fill(pal().raised)
+                        .stroke(Stroke::new(1.0, pal().line))
+                        .corner_radius(CornerRadius::same(10))
+                        .inner_margin(Margin::same(6))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                let s = p.preview.size_vec2();
+                                let scale = (48.0 / s.x.max(s.y)).min(1.0);
+                                ui.add(
+                                    egui::Image::new((p.preview.id(), s * scale))
+                                        .corner_radius(CornerRadius::same(6)),
+                                );
+                                ui.vertical(|ui| {
+                                    ui.set_max_width(150.0);
+                                    ui.spacing_mut().item_spacing.y = 0.0;
+                                    ui.add(
+                                        egui::Label::new(RichText::new(&p.name).size(13.0))
+                                            .truncate(),
+                                    );
+                                    ui.label(
+                                        RichText::new(images::size_label(p.bytes.len() as u64))
+                                            .size(12.0)
+                                            .color(pal().faint),
+                                    );
+                                });
+                                if close_button(ui)
+                                    .on_hover_text("Don't send this image")
+                                    .clicked()
+                                {
+                                    remove = Some(i);
+                                }
+                            });
+                        });
+                }
+                if self.att.preparing > 0 {
+                    ui.add(egui::Spinner::new().color(pal().muted));
+                    ui.label(
+                        RichText::new("Getting the image ready…")
+                            .size(13.0)
+                            .color(pal().muted),
+                    );
+                }
+            });
+            if let Some(i) = remove {
+                self.att.remove_pending(i);
+            }
+            ui.add_space(6.0);
+        }
+
         Frame::new()
-            .fill(RAISED)
-            .stroke(Stroke::new(1.0, LINE))
+            .fill(pal().raised)
+            .stroke(Stroke::new(1.0, pal().line))
             .corner_radius(CornerRadius::same(12))
             .inner_margin(Margin {
-                left: 14,
+                left: 4,
                 right: 6,
                 top: 6,
                 bottom: 6,
             })
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let send_w = 40.0;
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    // Attach an image.
+                    let can_attach = online && self.att.server_supports;
+                    let attach_tip = if !self.att.server_supports {
+                        "The server needs updating before images can be sent".to_string()
+                    } else if images::has_file_picker() {
+                        "Send an image (you can also drag one in or paste with Ctrl+V)".to_string()
+                    } else {
+                        "Drag an image onto the window, or paste one with Ctrl+V".to_string()
+                    };
+                    if attach_button(ui, can_attach)
+                        .on_hover_text(attach_tip)
+                        .clicked()
+                        && can_attach
+                    {
+                        if let Err(e) = self.att.pick() {
+                            self.show_banner(e, false, Some(6));
+                        }
+                    }
+                    ui.add_space(6.0);
+
+                    let buttons_w = 36.0 * 2.0 + 10.0;
                     let edit = egui::TextEdit::multiline(&mut self.composer)
+                        .id(egui::Id::new("composer"))
                         .hint_text(
                             RichText::new(if online {
                                 format!("Message #{}", self.current_text)
                             } else {
                                 "Waiting for the connection…".into()
                             })
-                            .color(FAINT),
+                            .color(pal().faint),
                         )
                         .desired_rows(1)
-                        .desired_width(ui.available_width() - send_w - 8.0)
+                        .desired_width(ui.available_width() - buttons_w)
                         .frame(false)
                         .char_limit(2000)
                         .return_key(Some(egui::KeyboardShortcut::new(
@@ -1661,10 +1920,31 @@ impl App {
                     }
                     let enter = resp.has_focus()
                         && ui.input(|i| i.key_pressed(Key::Enter) && !i.modifiers.shift);
+
+                    let emoji_resp = icon_button(ui, "☺", false, pal().muted, "Emoji");
+                    if emoji_resp.clicked() {
+                        self.emoji_open = !self.emoji_open;
+                        self.emoji_anchor = emoji_resp.rect;
+                        self.emoji_opened_frame = ui.ctx().cumulative_frame_nr();
+                    }
                     let send_clicked = send_button(ui).clicked();
                     if (enter || send_clicked) && online {
-                        let text = self.composer.trim().to_string();
-                        if !text.is_empty() {
+                        let text = emoji::convert(self.composer.trim());
+                        let pending = self.att.take_pending();
+                        if !pending.is_empty() {
+                            for (i, p) in pending.into_iter().enumerate() {
+                                let header = UploadHeader {
+                                    channel: self.current_text.clone(),
+                                    text: if i == 0 { text.clone() } else { String::new() },
+                                    name: p.name,
+                                    mime: p.mime.to_string(),
+                                    width: p.width,
+                                    height: p.height,
+                                };
+                                self.net.upload(proto::encode_upload(&header, &p.bytes));
+                            }
+                            self.composer.clear();
+                        } else if !text.is_empty() {
                             self.net.send(ClientMsg::Chat {
                                 channel: self.current_text.clone(),
                                 text,
@@ -1674,6 +1954,294 @@ impl App {
                         resp.request_focus();
                     }
                 });
+            });
+    }
+
+    /// Put an emoji where the cursor is in the message box.
+    fn insert_emoji(&mut self, ctx: &egui::Context, e: &str) {
+        let id = egui::Id::new("composer");
+        let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+        let len = self.composer.chars().count();
+        let at = state
+            .cursor
+            .char_range()
+            .map(|r| r.primary.index)
+            .unwrap_or(len)
+            .min(len);
+        let byte = self
+            .composer
+            .char_indices()
+            .nth(at)
+            .map(|(b, _)| b)
+            .unwrap_or(self.composer.len());
+        self.composer.insert_str(byte, e);
+        let cursor = egui::text::CCursor::new(at + e.chars().count());
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+        state.store(ctx, id);
+        self.focus_composer = true;
+    }
+
+    fn emoji_picker(&mut self, ctx: &egui::Context) {
+        if !self.emoji_open {
+            return;
+        }
+        let mut chosen: Option<&'static str> = None;
+        let area = egui::Area::new(egui::Id::new("emoji_picker"))
+            .order(egui::Order::Foreground)
+            .pivot(Align2::RIGHT_BOTTOM)
+            .fixed_pos(self.emoji_anchor.right_top() + egui::vec2(0.0, -8.0))
+            .constrain(true)
+            .show(ctx, |ui| {
+                Frame::popup(ui.style())
+                    .fill(pal().raised)
+                    .stroke(Stroke::new(1.0, pal().line))
+                    .inner_margin(Margin::same(8))
+                    .show(ui, |ui| {
+                        egui::Grid::new("emoji_grid")
+                            .spacing([2.0, 2.0])
+                            .show(ui, |ui| {
+                                for (n, (code, e)) in emoji::picker().iter().enumerate() {
+                                    let b = egui::Button::new(
+                                        RichText::new(*e).size(20.0).color(pal().text),
+                                    )
+                                    .frame(false)
+                                    .min_size(egui::vec2(34.0, 34.0));
+                                    if ui.add(b).on_hover_text(format!(":{code}:")).clicked() {
+                                        chosen = Some(e);
+                                    }
+                                    if (n + 1) % 8 == 0 {
+                                        ui.end_row();
+                                    }
+                                }
+                            });
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new(
+                                "Tip: type :) or :fire: and it turns into an emoji when sent.",
+                            )
+                            .size(12.0)
+                            .color(pal().faint),
+                        );
+                    });
+            });
+        if let Some(e) = chosen {
+            self.insert_emoji(ctx, e);
+            self.emoji_open = false;
+            return;
+        }
+        let just_opened = self.emoji_opened_frame == ctx.cumulative_frame_nr();
+        let pressed_elsewhere = !just_opened
+            && ctx.input(|i| i.pointer.any_pressed())
+            && !area.response.contains_pointer()
+            && !self
+                .emoji_anchor
+                .contains(ctx.input(|i| i.pointer.interact_pos().unwrap_or_default()));
+        if pressed_elsewhere || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.emoji_open = false;
+        }
+    }
+
+    /// Full-size view of an image, over everything else.
+    fn image_viewer(&mut self, ctx: &egui::Context) {
+        let Some(v) = &self.att.viewer else { return };
+        let screen = ctx.screen_rect();
+        let mut close = ctx.input(|i| i.key_pressed(Key::Escape));
+        let mut open_external = false;
+        let white = Color32::WHITE;
+        egui::Area::new(egui::Id::new("image_viewer"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .show(ctx, |ui| {
+                let (rect, bg) = ui.allocate_exact_size(screen.size(), Sense::click());
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::ZERO, Color32::from_black_alpha(220));
+                let thumb = match self.att.images.get(&v.id) {
+                    Some(ImgState::Ready(t)) => Some(t),
+                    _ => None,
+                };
+                let area = rect.shrink2(egui::vec2(40.0, 70.0));
+                let mut image_rect = egui::Rect::NOTHING;
+                if let Some(t) = v.full.as_ref().or(thumb) {
+                    let s = t.size_vec2();
+                    let scale = (area.width() / s.x)
+                        .min(area.height() / s.y)
+                        .min(1.0 / ctx.pixels_per_point())
+                        .max(0.01);
+                    let size = s * scale;
+                    image_rect = egui::Rect::from_center_size(area.center(), size);
+                    egui::Image::new((t.id(), size))
+                        .corner_radius(CornerRadius::same(6))
+                        .paint_at(ui, image_rect);
+                }
+                if v.full.is_none() {
+                    ui.painter().text(
+                        egui::pos2(area.center().x, area.bottom() + 24.0),
+                        Align2::CENTER_CENTER,
+                        "Loading full size…",
+                        FontId::proportional(13.0),
+                        Color32::from_gray(190),
+                    );
+                }
+                let bar = egui::Rect::from_min_size(
+                    rect.min + egui::vec2(24.0, 16.0),
+                    egui::vec2(rect.width() - 48.0, 36.0),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(bar)
+                        .layout(Layout::left_to_right(Align::Center)),
+                    |ui| {
+                        ui.label(RichText::new(&v.name).color(white).strong());
+                        ui.label(
+                            RichText::new(images::size_label(v.size))
+                                .color(Color32::from_gray(190)),
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            let btn = |t: &str| {
+                                egui::Button::new(RichText::new(t).color(white))
+                                    .fill(Color32::from_white_alpha(30))
+                            };
+                            if ui.add(btn("Close")).clicked() {
+                                close = true;
+                            }
+                            if ui.add(btn("Open in photo viewer")).clicked() {
+                                open_external = true;
+                            }
+                        });
+                    },
+                );
+                let pos = ctx.input(|i| i.pointer.interact_pos());
+                if bg.clicked() && pos.is_some_and(|p| !image_rect.contains(p) && !bar.contains(p))
+                {
+                    close = true;
+                }
+            });
+        if open_external {
+            let (id, name) = (v.id.clone(), v.name.clone());
+            match self.att.raw_bytes(&id) {
+                Some(bytes) => {
+                    if let Err(e) = images::open_externally(&id, &name, &bytes) {
+                        self.show_banner(format!("Couldn't open the image ({e})."), true, Some(6));
+                    }
+                }
+                None => self.show_banner(
+                    "The image is still downloading. Try again in a moment.",
+                    false,
+                    Some(4),
+                ),
+            }
+        }
+        if close {
+            self.att.close_viewer();
+        }
+    }
+
+    /// Images dragged onto the window, and Ctrl+V with an image on the clipboard.
+    fn handle_image_input(&mut self, ctx: &egui::Context) {
+        if self.session.is_none() || self.conn == Conn::Offline {
+            return;
+        }
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        for path in dropped {
+            if !self.att.server_supports {
+                self.show_banner(
+                    "The server needs updating before images can be sent.",
+                    false,
+                    Some(6),
+                );
+                break;
+            }
+            if let Err(e) = self.att.add_file(path) {
+                self.show_banner(e, false, Some(6));
+                break;
+            }
+        }
+        // egui swallows Ctrl+V when the clipboard holds only an image, but the key release
+        // still arrives. Either signal counts; the debounce stops a double attach.
+        // egui swallows the key press of Ctrl+V when the clipboard holds only an image (no text),
+        // but the release still arrives. A V release with no matching press means "paste".
+        let mut paste = false;
+        ctx.input(|i| {
+            for e in &i.events {
+                match e {
+                    egui::Event::Paste(_) => paste = true,
+                    egui::Event::Key {
+                        key: Key::V,
+                        pressed: true,
+                        ..
+                    } => self.v_press_seen = true,
+                    egui::Event::Key {
+                        key: Key::V,
+                        pressed: false,
+                        ..
+                    } => {
+                        if !self.v_press_seen {
+                            paste = true;
+                        }
+                        self.v_press_seen = false;
+                    }
+                    _ => {}
+                }
+            }
+        });
+        if paste
+            && self.att.server_supports
+            && !self.settings_open
+            && self
+                .last_paste
+                .is_none_or(|t| t.elapsed() > Duration::from_millis(500))
+        {
+            self.last_paste = Some(Instant::now());
+            self.att.paste();
+        }
+        for e in self.att.poll(ctx) {
+            self.show_banner(e, true, Some(6));
+        }
+    }
+
+    fn drop_overlay(&self, ctx: &egui::Context) {
+        if !ctx.input(|i| !i.raw.hovered_files.is_empty()) {
+            return;
+        }
+        let screen = ctx.screen_rect();
+        egui::Area::new(egui::Id::new("drop_overlay"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .interactable(false)
+            .show(ctx, |ui| {
+                let p = ui.painter();
+                p.rect_filled(
+                    screen,
+                    CornerRadius::ZERO,
+                    theme::with_alpha(pal().bg_deep, 210),
+                );
+                let inner = screen.shrink(24.0);
+                p.rect_stroke(
+                    inner,
+                    CornerRadius::same(16),
+                    Stroke::new(2.0, pal().accent),
+                    egui::StrokeKind::Inside,
+                );
+                let text = if self.att.server_supports {
+                    "Drop to send this image"
+                } else {
+                    "The server needs updating before images can be sent"
+                };
+                p.text(
+                    screen.center(),
+                    Align2::CENTER_CENTER,
+                    text,
+                    FontId::proportional(20.0),
+                    pal().text,
+                );
             });
     }
 
@@ -1688,13 +2256,13 @@ impl App {
             .constrain(true)
             .show(ctx, |ui| {
                 Frame::popup(ui.style())
-                    .fill(RAISED)
+                    .fill(pal().raised)
                     .inner_margin(Margin::same(14))
                     .show(ui, |ui| {
                         ui.set_width(240.0);
                         ui.label(RichText::new(&name).strong());
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Volume").size(13.0).color(MUTED));
+                        ui.label(RichText::new("Volume").size(13.0).color(pal().muted));
                         let changed_vol = ui
                             .add(
                                 egui::Slider::new(&mut vol, 0.0..=200.0)
@@ -1750,14 +2318,14 @@ impl App {
         let mut reopen_output = false;
         let mut flags_changed = false;
         let mut sign_out = false;
-        egui::Window::new(RichText::new("Voice settings").strong().size(17.0))
+        egui::Window::new(RichText::new("Settings").strong().size(17.0))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .open(&mut open)
             .frame(
                 Frame::window(&ctx.style())
-                    .fill(BG)
+                    .fill(pal().bg)
                     .inner_margin(Margin::same(22)),
             )
             .show(ctx, |ui| {
@@ -1769,7 +2337,12 @@ impl App {
                         ui.set_width(400.0);
                         let devices = self.devices.clone().unwrap_or_default();
 
-                        ui.label(RichText::new("Microphone").size(13.0).strong().color(MUTED));
+                        ui.label(
+                            RichText::new("Microphone")
+                                .size(13.0)
+                                .strong()
+                                .color(pal().muted),
+                        );
                         let current = self
                             .s
                             .input_device
@@ -1806,16 +2379,16 @@ impl App {
                         let (rect, _) =
                             ui.allocate_exact_size(egui::vec2(400.0, 10.0), Sense::hover());
                         let p = ui.painter();
-                        p.rect_filled(rect, CornerRadius::same(5), BG_DEEP);
+                        p.rect_filled(rect, CornerRadius::same(5), pal().bg_deep);
                         let to_x = |db: f32| {
                             rect.left() + rect.width() * ((db + 70.0) / 70.0).clamp(0.0, 1.0)
                         };
                         let level = self.ctl.level_db();
                         let above = level > self.s.threshold_db;
                         let fill = if !self.s.push_to_talk && above {
-                            TEAL
+                            pal().teal
                         } else {
-                            Color32::from_rgb(85, 140, 122)
+                            theme::mix(pal().teal, pal().bg_deep, 0.45)
                         };
                         p.rect_filled(
                             egui::Rect::from_min_max(rect.min, egui::pos2(to_x(level), rect.max.y)),
@@ -1829,7 +2402,7 @@ impl App {
                                     egui::pos2(x, rect.top() - 3.0),
                                     egui::pos2(x, rect.bottom() + 3.0),
                                 ],
-                                Stroke::new(2.0, AMBER),
+                                Stroke::new(2.0, pal().accent),
                             );
                         }
                         let hint = if self.input.is_some() {
@@ -1841,14 +2414,14 @@ impl App {
                         } else {
                             "Microphone isn't available."
                         };
-                        ui.label(RichText::new(hint).size(12.5).color(FAINT));
+                        ui.label(RichText::new(hint).size(12.5).color(pal().faint));
                         ui.add_space(8.0);
 
                         ui.label(
                             RichText::new("Speakers or headphones")
                                 .size(13.0)
                                 .strong()
-                                .color(MUTED),
+                                .color(pal().muted),
                         );
                         let current = self
                             .s
@@ -1895,7 +2468,7 @@ impl App {
                             RichText::new("When to send your voice")
                                 .size(13.0)
                                 .strong()
-                                .color(MUTED),
+                                .color(pal().muted),
                         );
                         ui.horizontal(|ui| {
                             flags_changed |= ui
@@ -1907,20 +2480,24 @@ impl App {
                         });
                         if self.s.push_to_talk {
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new("Key").color(MUTED));
+                                ui.label(RichText::new("Key").color(pal().muted));
                                 let label = if self.capturing {
                                     "Press a key or mouse button…".to_string()
                                 } else {
                                     keys::key_name(self.s.ptt_key)
                                 };
-                                let btn = egui::Button::new(
-                                    RichText::new(label).color(if self.capturing {
-                                        AMBER_INK
+                                let btn = egui::Button::new(RichText::new(label).color(
+                                    if self.capturing {
+                                        pal().accent_ink
                                     } else {
-                                        TEXT
-                                    }),
-                                )
-                                .fill(if self.capturing { AMBER } else { RAISED_2 })
+                                        pal().text
+                                    },
+                                ))
+                                .fill(if self.capturing {
+                                    pal().accent
+                                } else {
+                                    pal().raised_2
+                                })
                                 .min_size(egui::vec2(220.0, 30.0));
                                 if ui.add(btn).clicked() && !self.capturing {
                                     self.capturing = true;
@@ -1932,14 +2509,14 @@ impl App {
                             } else {
                                 "Works while this window is in front."
                             };
-                            ui.label(RichText::new(note).size(12.5).color(FAINT));
+                            ui.label(RichText::new(note).size(12.5).color(pal().faint));
                         } else {
                             ui.label(
                                 RichText::new(
                                     "Sensitivity: your mic opens when it passes the amber line.",
                                 )
                                 .size(12.5)
-                                .color(FAINT),
+                                .color(pal().faint),
                             );
                             if ui
                                 .add(
@@ -1963,7 +2540,33 @@ impl App {
                         ui.add_space(10.0);
                         ui.separator();
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Updates").size(13.0).strong().color(MUTED));
+                        ui.label(
+                            RichText::new("Theme")
+                                .size(13.0)
+                                .strong()
+                                .color(pal().muted),
+                        );
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+                            for t in theme::THEMES {
+                                let selected = self.s.theme == t.id;
+                                if theme_swatch(ui, &t, selected).clicked() && !selected {
+                                    self.s.theme = t.id.to_string();
+                                    theme::apply(ui.ctx(), t.id);
+                                    self.s.save();
+                                }
+                            }
+                        });
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                        ui.label(
+                            RichText::new("Updates")
+                                .size(13.0)
+                                .strong()
+                                .color(pal().muted),
+                        );
                         let (checking, latest, error, checked) = {
                             let u = self.update.lock();
                             (u.checking, u.latest.clone(), u.error.clone(), u.checked)
@@ -1988,9 +2591,9 @@ impl App {
                         ui.horizontal(|ui| {
                             if let Some(r) = &latest {
                                 let btn = egui::Button::new(
-                                    RichText::new("Download").color(AMBER_INK).strong(),
+                                    RichText::new("Download").color(pal().accent_ink).strong(),
                                 )
-                                .fill(AMBER);
+                                .fill(pal().accent);
                                 if ui.add(btn).clicked() {
                                     ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
                                 }
@@ -2019,12 +2622,12 @@ impl App {
                             ui.label(
                                 RichText::new(format!("Backroom is using {mb:.0} MB of memory."))
                                     .size(12.5)
-                                    .color(FAINT),
+                                    .color(pal().faint),
                             );
                         }
                         ui.add_space(6.0);
-                        let signout =
-                            egui::Button::new(RichText::new("Sign out").color(RED)).fill(RAISED_2);
+                        let signout = egui::Button::new(RichText::new("Sign out").color(pal().red))
+                            .fill(pal().raised_2);
                         if ui.add(signout).clicked() {
                             sign_out = true;
                         }
@@ -2070,8 +2673,8 @@ impl App {
             .interactable(true)
             .show(ctx, |ui| {
                 Frame::new()
-                    .fill(RAISED_2)
-                    .stroke(Stroke::new(1.0, if error { RED } else { LINE }))
+                    .fill(pal().raised_2)
+                    .stroke(Stroke::new(1.0, if error { pal().red } else { pal().line }))
                     .corner_radius(CornerRadius::same(18))
                     .inner_margin(Margin::symmetric(16, 8))
                     .shadow(ctx.style().visuals.popup_shadow)
@@ -2079,12 +2682,8 @@ impl App {
                         ui.set_max_width(560.0);
                         ui.horizontal(|ui| {
                             ui.add(
-                                egui::Label::new(RichText::new(&text).size(13.5).color(if error {
-                                    Color32::from_rgb(255, 212, 218)
-                                } else {
-                                    TEXT
-                                }))
-                                .wrap(),
+                                egui::Label::new(RichText::new(&text).size(13.5).color(pal().text))
+                                    .wrap(),
                             );
                             if close_button(ui).clicked() {
                                 self.banner = None;
@@ -2099,6 +2698,7 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_events(ctx);
         self.handle_keys(ctx);
+        self.handle_image_input(ctx);
         self.sync_audio();
 
         if self.session.is_some() && self.conn != Conn::Offline {
@@ -2133,9 +2733,9 @@ impl eframe::App for App {
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [
-            BG_DEEP.r() as f32 / 255.0,
-            BG_DEEP.g() as f32 / 255.0,
-            BG_DEEP.b() as f32 / 255.0,
+            pal().bg_deep.r() as f32 / 255.0,
+            pal().bg_deep.g() as f32 / 255.0,
+            pal().bg_deep.b() as f32 / 255.0,
             1.0,
         ]
     }

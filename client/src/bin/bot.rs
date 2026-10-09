@@ -52,6 +52,8 @@ fn main() {
         .unwrap_or(5.0);
     let mute_after: Option<f32> = arg(&args, "--mute-after").and_then(|s| s.parse().ok());
     let deafen = args.iter().any(|a| a == "--deafen");
+    let send_image = arg(&args, "--send-image");
+    let caption = arg(&args, "--caption").unwrap_or_default();
     let say: Vec<String> = arg(&args, "--say")
         .map(|s| s.split('|').map(str::to_string).collect())
         .unwrap_or_default();
@@ -110,6 +112,28 @@ fn main() {
         });
         std::thread::sleep(Duration::from_millis(150));
     }
+    let mut image_sent: Option<(String, usize)> = None;
+    if let Some(path) = &send_image {
+        match backroom::images::prepare_file(std::path::Path::new(path), 8 << 20) {
+            Ok(p) => {
+                let header = proto::UploadHeader {
+                    channel: "general".into(),
+                    text: caption.clone(),
+                    name: p.name.clone(),
+                    mime: p.mime.into(),
+                    width: p.width,
+                    height: p.height,
+                };
+                net.upload(proto::encode_upload(&header, &p.bytes));
+                image_sent = Some((p.name, p.bytes.len()));
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    // Images others post while we're here: fetch each one and check the size matches.
+    let mut images_seen: Vec<serde_json::Value> = Vec::new();
+    let mut expected: std::collections::HashMap<String, (String, u64)> =
+        std::collections::HashMap::new();
 
     let start = Instant::now();
     let mut next = start;
@@ -161,8 +185,21 @@ fn main() {
         }
         heard.extend_from_slice(&out);
         while let Some(ev) = net.try_recv() {
-            if let NetEvent::Ping(ms) = ev {
-                pings.push(ms);
+            match ev {
+                NetEvent::Ping(ms) => pings.push(ms),
+                NetEvent::Server(ServerMsg::Chat { message }) => {
+                    for a in &message.attachments {
+                        expected.insert(a.id.clone(), (a.name.clone(), a.size));
+                        net.send(ClientMsg::GetAttachment { id: a.id.clone() });
+                    }
+                }
+                NetEvent::Attachment { id, bytes } => {
+                    let (name, size) = expected.get(&id).cloned().unwrap_or_default();
+                    let decodes = backroom::images::decode_fit(&bytes, 64, 64).is_ok();
+                    images_seen.push(serde_json::json!({ "name": name, "bytes": bytes.len(), "sizeMatches": bytes.len() as u64 == size, "decodes": decodes }));
+                }
+                NetEvent::Server(ServerMsg::Error { message, .. }) => errors.push(message),
+                _ => {}
             }
         }
         next += Duration::from_millis(20);
@@ -198,6 +235,7 @@ fn main() {
             "name": name, "ok": true, "id": my_id, "framesSent": sent, "framesSentWhileMuted": sent_after_mute,
             "heardSecondHalfDb": levels, "heardFirstHalfDb": first_half,
             "speakingSeen": speaking_seen, "pingsMs": pings,
+            "imageSent": image_sent.map(|(n, b)| serde_json::json!({ "name": n, "bytes": b })), "imagesReceived": images_seen, "errors": errors,
         })
     );
     net.disconnect();

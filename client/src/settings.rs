@@ -32,6 +32,8 @@ pub struct Settings {
     pub last_text_channel: Option<String>,
     /// Look for new versions on GitHub.
     pub check_updates: bool,
+    /// Color theme id (see theme.rs).
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -55,6 +57,7 @@ impl Default for Settings {
             local_mutes: BTreeSet::new(),
             last_text_channel: None,
             check_updates: true,
+            theme: "plum".into(),
         }
     }
 }

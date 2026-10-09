@@ -2,6 +2,13 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.3.0
+
+- Send images: click +, drag one onto the window, or paste with Ctrl+V. Big photos are shrunk before sending; click an image to see it full size.
+- Emoji: `:)` `<3` `:D` and codes like `:fire:` turn into emoji when sent, and there's an emoji picker in the message box.
+- Themes: Plum, Midnight, Light, Cream, Pastel pink and Mint, under Settings.
+- Fixed dark text on a dark background on PCs that use Windows' light mode.
+
 ## 0.2.0
 
 First native release, replacing the browser version.

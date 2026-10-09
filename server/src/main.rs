@@ -11,7 +11,7 @@ use config::Config;
 use futures_util::{SinkExt, StreamExt};
 use log::Level;
 use proto::*;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::BufRead;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -42,6 +42,7 @@ struct Client {
     dropped_while_muted: bool,
     chat_times: VecDeque<Instant>,
     report_times: VecDeque<Instant>,
+    upload_times: VecDeque<Instant>,
 }
 
 struct State {
@@ -291,6 +292,7 @@ fn handle_text(shared: &Shared, id: u32, text: &str) {
         }
         ClientMsg::Ping { t } => st.send(id, &ServerMsg::Pong { t }),
         ClientMsg::Report { kind, message } => report(&mut st, id, &kind, &message),
+        ClientMsg::GetAttachment { id: att } => request_attachment(&st, id, &att),
     }
 }
 
@@ -376,6 +378,8 @@ fn hello(st: &mut State, id: u32, name: &str, password: &str, version: u32) {
         history: st.history.clone(),
         voice_state: st.voice_state(),
         users: st.users(),
+        features: vec![FEATURE_ATTACHMENTS.to_string()],
+        max_attachment_bytes: st.cfg.max_attachment_bytes,
     };
     st.send(id, &welcome);
     st.broadcast_presence();
@@ -435,21 +439,14 @@ fn chat(st: &mut State, id: u32, channel: &str, text: &str) {
         author_id: id.to_string(),
         text,
         ts: now_ms(),
+        attachments: Vec::new(),
     };
     debug!(
         "chat",
         "{name} posted in #{channel} ({} characters)",
         message.text.chars().count()
     );
-    let limit = st.cfg.history_limit;
-    let list = st.history.entry(channel.to_string()).or_default();
-    list.push(message.clone());
-    if list.len() > limit {
-        let extra = list.len() - limit;
-        list.drain(..extra);
-    }
-    st.history_dirty = true;
-    st.broadcast(&ServerMsg::Chat { message });
+    post_message(st, message);
 }
 
 fn join_voice(st: &mut State, id: u32, channel: &str, muted: bool, deafened: bool) {
@@ -672,6 +669,7 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
                 dropped_while_muted: false,
                 chat_times: VecDeque::new(),
                 report_times: VecDeque::new(),
+                upload_times: VecDeque::new(),
             },
         );
         id
@@ -698,7 +696,13 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
                 last_heard = Instant::now();
                 match msg {
                     Some(Ok(Message::Text(t))) => handle_text(&shared, id, t.as_str()),
-                    Some(Ok(Message::Binary(b))) => handle_voice(&shared, id, &b),
+                    Some(Ok(Message::Binary(b))) => {
+                        if b.first() == Some(&ATTACH_UPLOAD) {
+                            handle_upload(&shared, id, &b);
+                        } else {
+                            handle_voice(&shared, id, &b);
+                        }
+                    }
                     Some(Ok(Message::Close(_))) | None => break "closed",
                     Some(Ok(_)) => {}
                     Some(Err(e)) => {
@@ -801,6 +805,268 @@ fn save_history(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>>) {
     }
 }
 
+// ---------------------------------------------------------------- messages and images
+
+/// Add a message to history (dropping the oldest past the limit) and send it to everyone.
+fn post_message(st: &mut State, message: ChatMessage) {
+    let limit = st.cfg.history_limit;
+    let list = st.history.entry(message.channel.clone()).or_default();
+    list.push(message.clone());
+    let mut removed = Vec::new();
+    if list.len() > limit {
+        let extra = list.len() - limit;
+        for old in list.drain(..extra) {
+            removed.extend(old.attachments.into_iter().map(|a| a.id));
+        }
+    }
+    st.history_dirty = true;
+    if !removed.is_empty() {
+        let dir = attachments_dir(&st.cfg);
+        for id in removed {
+            let _ = std::fs::remove_file(dir.join(&id));
+            debug!(
+                "chat",
+                "Deleted image {id} (its message aged out of history)"
+            );
+        }
+    }
+    st.broadcast(&ServerMsg::Chat { message });
+}
+
+fn attachments_dir(cfg: &Config) -> PathBuf {
+    cfg.data_dir.join("attachments")
+}
+
+fn size_label(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else {
+        format!("{} KB", bytes.div_ceil(1024))
+    }
+}
+
+fn clean_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base.chars().filter(|c| !c.is_control()).take(80).collect();
+    if cleaned.trim().is_empty() {
+        "image".into()
+    } else {
+        cleaned.trim().to_string()
+    }
+}
+
+fn handle_upload(shared: &Shared, id: u32, frame: &[u8]) {
+    let mut st = shared.lock().unwrap();
+    if !st.clients.get(&id).is_some_and(|c| c.authed) {
+        return;
+    }
+    let name = st.who(id);
+    let fail = |st: &State, code: &str, message: String| {
+        st.send(
+            id,
+            &ServerMsg::Error {
+                code: code.into(),
+                message,
+            },
+        );
+    };
+    let Some((header, bytes)) = parse_upload(frame) else {
+        debug!("chat", "Ignored a malformed image upload from {name}");
+        return;
+    };
+    let max = st.cfg.max_attachment_bytes;
+    if bytes.len() as u64 > max {
+        warn!(
+            "chat",
+            "{name} tried to send an image that's too big ({})",
+            size_label(bytes.len() as u64)
+        );
+        fail(
+            &st,
+            "too_big",
+            format!("That image is too big ({} MB max).", max / 1_048_576),
+        );
+        return;
+    }
+    if !st.cfg.text_channels.contains(&header.channel) {
+        debug!(
+            "chat",
+            "{name} sent an image to a channel that doesn't exist"
+        );
+        return;
+    }
+    let Some(mime) = sniff_image(bytes) else {
+        warn!("chat", "{name} sent a file that isn't a supported image");
+        fail(
+            &st,
+            "bad_image",
+            "Only PNG, JPEG, GIF and WebP images can be sent.".into(),
+        );
+        return;
+    };
+    let now = Instant::now();
+    let too_many = {
+        let c = st.clients.get_mut(&id).unwrap();
+        while c
+            .upload_times
+            .front()
+            .is_some_and(|t| now.duration_since(*t) > Duration::from_secs(60))
+        {
+            c.upload_times.pop_front();
+        }
+        let too_many = c.upload_times.len() >= 10;
+        if !too_many {
+            c.upload_times.push_back(now);
+        }
+        too_many
+    };
+    if too_many {
+        warn!("chat", "{name} is sending images too fast; one was dropped");
+        fail(
+            &st,
+            "slow_down",
+            "You're sending images too fast. Wait a minute.".into(),
+        );
+        return;
+    }
+
+    let attachment = Attachment {
+        id: random_id(),
+        name: clean_file_name(&header.name),
+        mime: mime.to_string(),
+        size: bytes.len() as u64,
+        width: header.width.min(20_000),
+        height: header.height.min(20_000),
+    };
+    let text: String = header
+        .text
+        .replace("\r\n", "\n")
+        .trim()
+        .chars()
+        .take(2000)
+        .collect();
+    let channel = header.channel.clone();
+    let dir = attachments_dir(&st.cfg);
+    let path = dir.join(&attachment.id);
+    let bytes = bytes.to_vec();
+    let shared = shared.clone();
+    drop(st);
+
+    // Write the file off the main thread, then post the message.
+    tokio::spawn(async move {
+        let written = tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, &bytes))
+        })
+        .await;
+        let mut st = shared.lock().unwrap();
+        match written {
+            Ok(Ok(())) => {
+                info!(
+                    "chat",
+                    "{name} sent an image in #{channel} ({})",
+                    size_label(attachment.size)
+                );
+                let message = ChatMessage {
+                    id: random_id(),
+                    channel,
+                    author: name,
+                    author_id: id.to_string(),
+                    text,
+                    ts: now_ms(),
+                    attachments: vec![attachment],
+                };
+                post_message(&mut st, message);
+            }
+            Ok(Err(e)) => {
+                error!("chat", "Saving an image from {name} failed: {e}");
+                st.send(
+                    id,
+                    &ServerMsg::Error {
+                        code: "save_failed".into(),
+                        message: "The server couldn't save that image.".into(),
+                    },
+                );
+            }
+            Err(e) => error!("chat", "Saving an image from {name} failed: {e}"),
+        }
+    });
+}
+
+fn request_attachment(st: &State, client_id: u32, att_id: &str) {
+    let Some(c) = st.clients.get(&client_id) else {
+        return;
+    };
+    let known = att_id.len() <= 64
+        && att_id.chars().all(|ch| ch.is_ascii_hexdigit())
+        && st
+            .history
+            .values()
+            .flatten()
+            .any(|m| m.attachments.iter().any(|a| a.id == att_id));
+    if !known {
+        st.send(
+            client_id,
+            &ServerMsg::AttachmentGone {
+                id: att_id.to_string(),
+            },
+        );
+        return;
+    }
+    let path = attachments_dir(&st.cfg).join(att_id);
+    let tx = c.tx.clone();
+    let who = c.name.clone();
+    let att_id = att_id.to_string();
+    tokio::spawn(async move {
+        match tokio::task::spawn_blocking(move || std::fs::read(&path)).await {
+            Ok(Ok(bytes)) => {
+                trace!(
+                    "chat",
+                    "Sending image {att_id} to {who} ({})",
+                    size_label(bytes.len() as u64)
+                );
+                let _ = tx
+                    .send(Message::Binary(Bytes::from(encode_attachment_data(
+                        &att_id, &bytes,
+                    ))))
+                    .await;
+            }
+            _ => {
+                warn!("chat", "Image {att_id} is missing from data/attachments");
+                let gone =
+                    serde_json::to_string(&ServerMsg::AttachmentGone { id: att_id }).unwrap();
+                let _ = tx.send(Message::Text(gone.into())).await;
+            }
+        }
+    });
+}
+
+/// Delete stored images no message refers to any more.
+fn cleanup_attachments(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>>) {
+    let Ok(entries) = std::fs::read_dir(attachments_dir(cfg)) else {
+        return;
+    };
+    let keep: HashSet<&str> = history
+        .values()
+        .flatten()
+        .flat_map(|m| m.attachments.iter().map(|a| a.id.as_str()))
+        .collect();
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !keep.contains(name.to_string_lossy().as_ref())
+            && std::fs::remove_file(entry.path()).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    if removed > 0 {
+        info!(
+            "chat",
+            "Removed {removed} stored images that are no longer in chat history"
+        );
+    }
+}
+
 // ---------------------------------------------------------------- console commands
 
 fn console_commands(shared: Shared) {
@@ -880,6 +1146,7 @@ fn main() {
 
 async fn run(cfg: Arc<Config>) {
     let history = load_history(&cfg);
+    cleanup_attachments(&cfg, &history);
     let shared: Shared = Arc::new(Mutex::new(State {
         cfg: cfg.clone(),
         clients: HashMap::new(),

@@ -24,6 +24,8 @@ pub enum NetCmd {
     Disconnect,
     Send(ClientMsg),
     Voice(Vec<u8>),
+    /// An image upload frame (proto::encode_upload).
+    Upload(Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -39,6 +41,11 @@ pub enum NetEvent {
         message: String,
     },
     Ping(u32),
+    /// Bytes of an attachment we asked for.
+    Attachment {
+        id: String,
+        bytes: Vec<u8>,
+    },
 }
 
 #[derive(Clone)]
@@ -85,6 +92,9 @@ impl Net {
     }
     pub fn send(&self, msg: ClientMsg) {
         let _ = self.cmd.send(NetCmd::Send(msg));
+    }
+    pub fn upload(&self, frame: Vec<u8>) {
+        let _ = self.cmd.send(NetCmd::Upload(frame));
     }
     pub fn voice_sender(&self) -> VoiceSender {
         VoiceSender(self.cmd.clone())
@@ -302,7 +312,11 @@ where
                 last_heard = Instant::now();
                 match msg {
                     Some(Ok(Message::Binary(b))) => {
-                        if let Some((kind, sender, seq, payload)) = proto::parse_server_voice(&b) {
+                        if b.first() == Some(&proto::ATTACH_DATA) {
+                            if let Some((id, bytes)) = proto::parse_attachment_data(&b) {
+                                emit(NetEvent::Attachment { id: id.to_string(), bytes: bytes.to_vec() });
+                            }
+                        } else if let Some((kind, sender, seq, payload)) = proto::parse_server_voice(&b) {
                             if receiver.handle(kind, sender, seq, payload, mixer) {
                                 wake();
                             }
@@ -339,6 +353,10 @@ where
             cmd = cmd_rx.recv() => {
                 let out = match cmd {
                     Some(NetCmd::Voice(frame)) => {
+                        if !target.welcomed { continue; }
+                        Message::Binary(Bytes::from(frame))
+                    }
+                    Some(NetCmd::Upload(frame)) => {
                         if !target.welcomed { continue; }
                         Message::Binary(Bytes::from(frame))
                     }

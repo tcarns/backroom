@@ -19,6 +19,8 @@ pub struct Config {
     pub log_file: Option<PathBuf>,
     /// Look for newer versions on GitHub and mention them in the log.
     pub check_updates: bool,
+    /// Largest image someone can send.
+    pub max_attachment_bytes: u64,
     pub config_path: PathBuf,
     /// Notes to log once logging is running (first-run messages, bad values).
     pub notes: Vec<(Level, String)>,
@@ -39,6 +41,7 @@ struct FileConfig {
     log_level: Option<String>,
     log_file: Option<String>,
     check_updates: Option<bool>,
+    max_attachment_mb: Option<u64>,
 }
 
 fn base_dir() -> PathBuf {
@@ -74,6 +77,10 @@ max_per_voice_channel = 8
 
 # Chat messages kept per text channel.
 history_limit = 300
+
+# Largest image people can send, in megabytes. Images are kept in data/attachments
+# and deleted when their message ages out of history.
+max_attachment_mb = 8
 
 # How much to log: trace, debug, info, warn, error, critical.
 # You can also change it while the server runs by typing: level debug
@@ -250,7 +257,14 @@ pub fn load() -> Config {
         None => file.check_updates.unwrap_or(true),
     };
 
+    let max_attachment_mb = parse_num("MAX_ATTACHMENT_MB", env("MAX_ATTACHMENT_MB"), &mut notes)
+        .map(|n| n as u64)
+        .or(file.max_attachment_mb)
+        .unwrap_or(8)
+        .clamp(1, 50);
+
     Config {
+        max_attachment_bytes: max_attachment_mb * 1024 * 1024,
         check_updates,
         port,
         host,
