@@ -202,8 +202,8 @@ pub fn apply(ctx: &egui::Context, id: &str) {
     v.code_bg_color = p.raised;
     v.hyperlink_color = p.accent;
     v.selection.bg_fill = with_alpha(p.accent, if p.dark { 90 } else { 70 });
-    v.selection.stroke = Stroke::new(1.0, p.accent);
-    v.window_stroke = Stroke::new(1.0, p.line);
+    v.selection.stroke = Stroke::new(1.0_f32, p.accent);
+    v.window_stroke = Stroke::new(1.0_f32, p.line);
     v.window_corner_radius = CornerRadius::same(14);
     let shadow_alpha = if p.dark { 110 } else { 40 };
     v.window_shadow = egui::Shadow {
@@ -221,8 +221,8 @@ pub fn apply(ctx: &egui::Context, id: &str) {
     v.override_text_color = Some(p.text);
     v.weak_text_color = Some(p.faint);
     let w = &mut v.widgets;
-    w.noninteractive.bg_stroke = Stroke::new(1.0, p.line);
-    w.noninteractive.fg_stroke = Stroke::new(1.0, p.muted);
+    w.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.line);
+    w.noninteractive.fg_stroke = Stroke::new(1.0_f32, p.muted);
     for (st, fill) in [
         (&mut w.inactive, p.raised_2),
         (&mut w.hovered, p.line),
@@ -233,9 +233,9 @@ pub fn apply(ctx: &egui::Context, id: &str) {
         st.bg_fill = fill;
         st.corner_radius = CornerRadius::same(5);
         st.bg_stroke = Stroke::NONE;
-        st.fg_stroke = Stroke::new(1.0, p.text);
+        st.fg_stroke = Stroke::new(1.0_f32, p.text);
     }
-    w.hovered.bg_stroke = Stroke::new(1.0, mix(p.line, p.text, 0.25));
+    w.hovered.bg_stroke = Stroke::new(1.0_f32, mix(p.line, p.text, 0.25));
     // Checkbox and radio fill when not hovered.
     w.inactive.bg_fill = if p.dark {
         p.raised_2

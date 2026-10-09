@@ -15,7 +15,7 @@ This version doesn't work with the old browser version. Everyone needs the app.
 
 1. Put `backroom-server.exe` in a folder of its own. It saves its settings, chat history and logs next to itself.
 2. Double-click it. The first time, it creates `backroom-server.toml` with a random group password and shows that password in the window. To change the password, edit that file and restart the server.
-3. Keep the window open while people are using Backroom. If Windows asks whether to allow network access, allowing it on private networks is fine.
+3. Keep the window open while people are using Backroom. If Windows asks whether to allow network access, allowing it on private networks is fine. Task Manager shows two `backroom-server.exe` entries: a tiny watcher and the server itself (see Updates). That's normal.
 4. To let friends connect from outside your home, start a Cloudflare tunnel in PowerShell, the same as before:
    ```powershell
    cloudflared tunnel --url http://localhost:3000
@@ -70,12 +70,14 @@ Edit `backroom-server.toml` next to the server, then restart it:
 | `max_attachment_mb` | `8` | Largest image people can send |
 | `log_level` | `info` | How much to log |
 | `log_file` | `data/backroom.log` | Log file. `""` logs to the window only. |
+| `check_updates` | `true` | Check GitHub for a new version every 6 hours |
+| `auto_update` | `true` | Install new versions by itself (see Updates). `false` only tells you, and you type `update` to install. |
 
 Environment variables with the same names in capitals (`PASSWORD`, `PORT`, `LOG_LEVEL` and so on) override the file. These are the same names the old Node version used.
 
 Images are saved in `data\attachments`. They're deleted automatically when their message ages out of the chat history.
 
-**Mixing versions:** apps and servers from 0.2.0 and 0.3.0 work together. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out). A 0.2.0 app on a 0.3.0 server shows messages without their images.
+**Mixing versions:** all apps and servers from 0.2.0 on work together, so it doesn't matter who updates first. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out). A 0.2.0 app on a 0.3.0 server shows messages without their images.
 
 **Keeping your old chat history:** the history format is the same as the browser version's. Copy the old `data\messages.json` into the `data` folder next to `backroom-server.exe` before starting it.
 
@@ -99,6 +101,7 @@ Type these into the server window to change things while it runs:
 | `level` | Show the current level |
 | `level debug` | Switch to that level right away (any level name works) |
 | `status` | Who's online and in voice, uptime and the server's memory use |
+| `update` | Check for a new version now, install it and restart right away |
 | `help` | List the commands |
 
 The app reports problems only it can see, so they show up in your server log:
@@ -107,7 +110,7 @@ The app reports problems only it can see, so they show up in your server log:
 
 ## Updates
 
-The app and server check for a new version when they start and every 6 hours after that. You can also check from the app's settings, or turn automatic checks off there. On the server, set `check_updates = false` in `backroom-server.toml`.
+The app and server check for a new version when they start and every 6 hours after that. You can also check from the app's settings, or turn automatic checks off there. On the server, set `check_updates = false` in `backroom-server.toml` (`update` still works).
 
 **The app updates itself.** When a new version is out, a bar says "Backroom X is available". Click **Update now**, and the app:
 1. downloads the new version, with a progress bar
@@ -120,10 +123,19 @@ For updating to work, `backroom.exe` has to be in a folder you can save files in
 
 In-app updating started with 0.4.0, so going from 0.3.0 to 0.4.0 is done by hand: download the zip and replace `backroom.exe`.
 
-**The server** writes a notice in its window when there's a new version. To update it:
-1. Download the new zip from the release page.
-2. Close the server.
-3. Replace `backroom-server.exe`. Settings, chat history, images and logs are kept.
+**The server updates itself too** (from 0.5.0 on). When it finds a new version, it:
+1. downloads `backroom-server.exe` and checks it against the release's checksum file
+2. runs it once with `--version`, to make sure it starts on this PC and is really the new version
+3. swaps it in, then waits until nobody is in a voice channel and chat has been quiet for a minute
+4. tells everyone it's restarting, saves chat history and restarts, which takes about a second
+
+The apps say "The server is updating…", reconnect on their own, and rejoin voice. Settings, chat history, images and logs are kept. If any step fails, nothing is changed. The window says why, and it tries again at the next check.
+
+Type `update` in the server window to check right now and install and restart immediately, even if people are in voice. To be asked instead, set `auto_update = false`: the window then says when a version is out, and `update` installs it.
+
+The restart works because double-clicking `backroom-server.exe` starts a small watcher, which runs the server and starts it again after an update. The watcher also restarts the server if it ever crashes (after it has been running at least 30 seconds, so a bad setting doesn't loop). Ctrl+C or closing the window stops both. Ending either one in Task Manager also ends the other.
+
+Server updating started with 0.5.0, so getting the server from 0.4.0 or earlier to 0.5.0 is done by hand one last time: close the server, replace `backroom-server.exe` with the one from the zip, and start it again.
 
 ## Publishing a new version
 
@@ -131,7 +143,7 @@ In-app updating started with 0.4.0, so going from 0.3.0 to 0.4.0 is done by hand
 2. Add a section for that version at the top of `CHANGELOG.md`. It becomes the release notes people see.
 3. Commit and push to `main`.
 
-GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. The release includes the zip, the two `.exe` files (what the app downloads when it updates itself) and `SHA256SUMS.txt`, the checksums the app verifies against. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
+GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. The release includes the zip, the two `.exe` files (what the app and server download when they update themselves) and `SHA256SUMS.txt`, the checksums the app verifies against. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
 
 ## Building from source
 

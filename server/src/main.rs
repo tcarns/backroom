@@ -6,6 +6,7 @@
 #[macro_use]
 mod log;
 mod config;
+mod selfupdate;
 
 use config::Config;
 use futures_util::{SinkExt, StreamExt};
@@ -53,6 +54,11 @@ struct State {
     next_id: u32,
     next_voice_order: u64,
     started: Instant,
+    /// A newer server is installed and waiting for a restart.
+    pending_update: Option<String>,
+    /// Restart as soon as possible (typed "update").
+    restart_now: bool,
+    last_chat: Option<Instant>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -820,6 +826,7 @@ fn post_message(st: &mut State, message: ChatMessage) {
         }
     }
     st.history_dirty = true;
+    st.last_chat = Some(Instant::now());
     if !removed.is_empty() {
         let dir = attachments_dir(&st.cfg);
         for id in removed {
@@ -1069,7 +1076,7 @@ fn cleanup_attachments(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>
 
 // ---------------------------------------------------------------- console commands
 
-fn console_commands(shared: Shared) {
+fn console_commands(shared: Shared, updates: std::sync::mpsc::Sender<selfupdate::Request>) {
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
@@ -1078,7 +1085,7 @@ fn console_commands(shared: Shared) {
         let arg = parts.collect::<Vec<_>>().join(" ");
         match cmd.to_lowercase().as_str() {
             "help" => println!(
-                "Commands:\n  level              show the current log level\n  level <name>       change it now ({})\n  status             who is online and in voice, uptime, memory use\n  help               show this list",
+                "Commands:\n  level              show the current log level\n  level <name>       change it now ({})\n  status             who is online and in voice, uptime, memory use\n  update             install the newest version now and restart\n  help               show this list",
                 log::LEVEL_NAMES.join(", ")
             ),
             "level" if arg.is_empty() => println!("Log level is \"{}\". Options, most to least detail: {}", log::level().name(), log::LEVEL_NAMES.join(", ")),
@@ -1091,6 +1098,9 @@ fn console_commands(shared: Shared) {
                 None => println!("\"{arg}\" isn't a log level. Options: {}", log::LEVEL_NAMES.join(", ")),
             },
             "status" => println!("{}", shared.lock().unwrap().status_text()),
+            "update" => {
+                let _ = updates.send(selfupdate::Request::Now);
+            }
             _ => println!("Unknown command \"{cmd}\". Type \"help\" for the list."),
         }
     }
@@ -1098,37 +1108,53 @@ fn console_commands(shared: Shared) {
 
 // ---------------------------------------------------------------- updates
 
-fn update_checker() {
-    std::thread::sleep(Duration::from_secs(3));
-    let mut announced: Option<String> = None;
-    loop {
-        match proto::update::check() {
-            Ok(Some(r)) => {
-                if announced.as_deref() != Some(r.version.as_str()) {
-                    warn!(
-                        "update",
-                        "Backroom {} is available (this server is {}). Download it here: {}",
-                        r.version,
-                        proto::update::CURRENT,
-                        r.url
-                    );
-                    announced = Some(r.version);
-                }
+/// Restart into a newly installed version once nobody would notice: no one in
+/// voice and no chat for a minute (or right away if asked). Called every second.
+fn should_restart(st: &State) -> Option<String> {
+    let version = st.pending_update.clone()?;
+    let in_voice = st.clients.values().any(|c| c.authed && c.voice.is_some());
+    let quiet = st
+        .last_chat
+        .is_none_or(|t| t.elapsed() >= Duration::from_secs(60));
+    (st.restart_now || (!in_voice && quiet)).then_some(version)
+}
+
+async fn restart_for_update(shared: &Shared, version: String) -> ! {
+    {
+        let st = shared.lock().unwrap();
+        let online = st.online_count();
+        info!(
+            "update",
+            "Restarting to finish updating to {version}{}",
+            if online > 0 {
+                format!(" ({online} online will reconnect by themselves)")
+            } else {
+                String::new()
             }
-            Ok(None) => debug!(
-                "update",
-                "Backroom server {} is up to date",
-                proto::update::CURRENT
-            ),
-            Err(e) => debug!("update", "Couldn't check for updates: {e}"),
-        }
-        std::thread::sleep(proto::update::CHECK_EVERY);
+        );
+        st.broadcast(&ServerMsg::Restarting {
+            version: version.clone(),
+        });
+        save_history(&st.cfg, &st.history);
     }
+    // Let the goodbye messages go out.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    if !selfupdate::supervised() {
+        warn!(
+            "update",
+            "Backroom server {version} is installed. Start the server again to use it."
+        );
+    }
+    std::process::exit(selfupdate::RESTART_CODE);
 }
 
 // ---------------------------------------------------------------- main
 
 fn main() {
+    selfupdate::print_version_if_asked();
+    // Double-clicked: become the watcher that runs (and restarts) the server.
+    selfupdate::watch_unless_child();
+    let restarted = selfupdate::restart_reason();
     let cfg = config::load();
     log::init(cfg.log_level, cfg.log_file.clone());
     std::panic::set_hook(Box::new(|info| {
@@ -1137,6 +1163,19 @@ fn main() {
     for (level, note) in &cfg.notes {
         log::write(*level, "server", note, false);
     }
+    if let Some(r) = restarted {
+        log::write(
+            if r.starts_with("Restarted") {
+                Level::Info
+            } else {
+                Level::Warn
+            },
+            "server",
+            &r,
+            true,
+        );
+    }
+    proto::update::cleanup_leftovers();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -1155,10 +1194,24 @@ async fn run(cfg: Arc<Config>) {
         next_id: 0,
         next_voice_order: 0,
         started: Instant::now(),
+        pending_update: None,
+        restart_now: false,
+        last_chat: None,
     }));
 
     let addr = format!("{}:{}", cfg.host, cfg.port);
-    let listener = match TcpListener::bind(&addr).await {
+    let mut bind = TcpListener::bind(&addr).await;
+    // Just restarted: the previous copy may still be letting go of the port.
+    for _ in 0..20 {
+        match &bind {
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse && selfupdate::was_restarted() => {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                bind = TcpListener::bind(&addr).await;
+            }
+            _ => break,
+        }
+    }
+    let listener = match bind {
         Ok(l) => l,
         Err(e) => {
             if e.kind() == std::io::ErrorKind::AddrInUse {
@@ -1204,34 +1257,60 @@ async fn run(cfg: Arc<Config>) {
         );
     }
 
+    let (update_tx, update_rx) = std::sync::mpsc::channel();
     {
         let shared = shared.clone();
-        std::thread::spawn(move || console_commands(shared));
+        std::thread::spawn(move || console_commands(shared, update_tx));
     }
 
-    if cfg.check_updates {
+    {
+        let shared = shared.clone();
+        let checker = selfupdate::Checker {
+            periodic: cfg.check_updates,
+            auto_install: cfg.auto_update,
+            requests: update_rx,
+            installed: Box::new(move |version, now| {
+                let mut st = shared.lock().unwrap();
+                st.pending_update = Some(version.clone());
+                st.restart_now |= now;
+                if now {
+                    info!("update", "Backroom server {version} is installed");
+                } else {
+                    info!(
+                        "update",
+                        "Backroom server {version} is installed. The server will restart to use it once nobody is in voice (type \"update\" to restart now)."
+                    );
+                }
+            }),
+        };
         std::thread::Builder::new()
             .name("updates".into())
-            .spawn(update_checker)
+            .spawn(move || checker.run())
             .expect("spawn update thread");
     }
 
-    // Save chat history at most once a second.
+    // Once a second: save chat history if it changed, and restart into an installed update.
     {
         let shared = shared.clone();
         tokio::spawn(async move {
             let mut every = tokio::time::interval(Duration::from_secs(1));
             loop {
                 every.tick().await;
-                let snapshot = {
+                let (snapshot, restart) = {
                     let mut st = shared.lock().unwrap();
-                    if !st.history_dirty {
-                        continue;
-                    }
-                    st.history_dirty = false;
-                    st.history.clone()
+                    let restart = should_restart(&st);
+                    let snapshot = (st.history_dirty && restart.is_none()).then(|| {
+                        st.history_dirty = false;
+                        st.history.clone()
+                    });
+                    (snapshot, restart)
                 };
-                save_history(&cfg, &snapshot);
+                if let Some(version) = restart {
+                    restart_for_update(&shared, version).await;
+                }
+                if let Some(snapshot) = snapshot {
+                    save_history(&cfg, &snapshot);
+                }
             }
         });
     }

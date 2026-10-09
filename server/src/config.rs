@@ -19,6 +19,8 @@ pub struct Config {
     pub log_file: Option<PathBuf>,
     /// Look for newer versions on GitHub and mention them in the log.
     pub check_updates: bool,
+    /// Install new versions by itself and restart when nobody's in voice.
+    pub auto_update: bool,
     /// Largest image someone can send.
     pub max_attachment_bytes: u64,
     pub config_path: PathBuf,
@@ -41,6 +43,7 @@ struct FileConfig {
     log_level: Option<String>,
     log_file: Option<String>,
     check_updates: Option<bool>,
+    auto_update: Option<bool>,
     max_attachment_mb: Option<u64>,
 }
 
@@ -89,8 +92,12 @@ log_level = "info"
 # Set to "" to log only to this window.
 log_file = "data/backroom.log"
 
-# Check GitHub for a newer Backroom and say so in this window.
+# Check GitHub for a newer Backroom.
 check_updates = true
+
+# Install new versions by itself, then restart once nobody is in voice (people
+# reconnect on their own). Set to false to just be told, then type "update" to install.
+auto_update = true
 "#
     )
 }
@@ -257,6 +264,11 @@ pub fn load() -> Config {
         None => file.check_updates.unwrap_or(true),
     };
 
+    let auto_update = match env("AUTO_UPDATE") {
+        Some(v) => !["0", "false", "no", "off"].contains(&v.to_lowercase().as_str()),
+        None => file.auto_update.unwrap_or(true),
+    };
+
     let max_attachment_mb = parse_num("MAX_ATTACHMENT_MB", env("MAX_ATTACHMENT_MB"), &mut notes)
         .map(|n| n as u64)
         .or(file.max_attachment_mb)
@@ -266,6 +278,7 @@ pub fn load() -> Config {
     Config {
         max_attachment_bytes: max_attachment_mb * 1024 * 1024,
         check_updates,
+        auto_update,
         port,
         host,
         password,

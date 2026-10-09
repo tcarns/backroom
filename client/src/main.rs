@@ -189,6 +189,8 @@ struct App {
     voice_channel: Option<String>,
     joining: Option<String>,
     want_voice: Option<String>,
+    /// The server said it's restarting (to update); explains the brief disconnect.
+    server_restarting: Option<String>,
     ping: Option<u32>,
     composer: String,
     focus_composer: bool,
@@ -250,6 +252,7 @@ impl App {
             voice_channel: None,
             joining: None,
             want_voice: None,
+            server_restarting: None,
             ping: None,
             composer: String::new(),
             focus_composer: false,
@@ -542,11 +545,14 @@ impl App {
                     }
                     self.leave_voice_quietly();
                     self.conn = Conn::Reconnecting;
-                    self.show_banner(
-                        format!("Connection lost ({reason}). Reconnecting…"),
-                        false,
-                        None,
-                    );
+                    let text = match &self.server_restarting {
+                        Some(v) if !v.is_empty() => {
+                            format!("The server is updating to Backroom {v}. Back in a moment…")
+                        }
+                        Some(_) => "The server is restarting. Back in a moment…".to_string(),
+                        None => format!("Connection lost ({reason}). Reconnecting…"),
+                    };
+                    self.show_banner(text, false, None);
                 }
                 NetEvent::Ping(ms) => self.ping = Some(ms),
                 NetEvent::Attachment { id, bytes } => self.att.on_data(id, bytes),
@@ -571,6 +577,7 @@ impl App {
                 max_attachment_bytes,
             } => {
                 let first = self.session.is_none();
+                self.server_restarting = None;
                 self.att.server_supports = features.iter().any(|f| f == FEATURE_ATTACHMENTS);
                 if max_attachment_bytes > 0 {
                     self.att.max_bytes = max_attachment_bytes;
@@ -682,6 +689,7 @@ impl App {
             }
             ServerMsg::Pong { .. } => {}
             ServerMsg::AttachmentGone { id } => self.att.gone(&id),
+            ServerMsg::Restarting { version } => self.server_restarting = Some(version),
         }
     }
 
@@ -831,7 +839,7 @@ fn icon_button(
                 rect.center() + egui::vec2(-9.0, -9.0),
                 rect.center() + egui::vec2(9.0, 9.0),
             ],
-            Stroke::new(2.2, pal().red),
+            Stroke::new(2.2_f32, pal().red),
         );
     }
     resp.on_hover_text(tip)
@@ -883,14 +891,14 @@ fn attach_button(ui: &mut egui::Ui, enabled: bool) -> egui::Response {
             Color32::TRANSPARENT
         },
     );
-    p.circle_stroke(c, 10.0, Stroke::new(1.6, color));
+    p.circle_stroke(c, 10.0, Stroke::new(1.6_f32, color));
     p.line_segment(
         [c + egui::vec2(-4.5, 0.0), c + egui::vec2(4.5, 0.0)],
-        Stroke::new(1.8, color),
+        Stroke::new(1.8_f32, color),
     );
     p.line_segment(
         [c + egui::vec2(0.0, -4.5), c + egui::vec2(0.0, 4.5)],
-        Stroke::new(1.8, color),
+        Stroke::new(1.8_f32, color),
     );
     resp
 }
@@ -902,7 +910,7 @@ fn close_button(ui: &mut egui::Ui) -> egui::Response {
         p.rect_filled(rect, CornerRadius::same(6), pal().line);
     }
     let c = rect.center();
-    let s = Stroke::new(1.6, pal().muted);
+    let s = Stroke::new(1.6_f32, pal().muted);
     p.line_segment([c + egui::vec2(-4.5, -4.5), c + egui::vec2(4.5, 4.5)], s);
     p.line_segment([c + egui::vec2(4.5, -4.5), c + egui::vec2(-4.5, 4.5)], s);
     resp.on_hover_text("Dismiss")
@@ -941,11 +949,11 @@ fn theme_swatch(ui: &mut egui::Ui, t: &theme::Palette, selected: bool) -> egui::
     line(18.0, 18.0, t.muted);
     line(26.0, 20.0, t.text);
     let border = if selected {
-        Stroke::new(2.0, pal().accent)
+        Stroke::new(2.0_f32, pal().accent)
     } else if resp.hovered() {
-        Stroke::new(1.0, pal().muted)
+        Stroke::new(1.0_f32, pal().muted)
     } else {
-        Stroke::new(1.0, pal().line)
+        Stroke::new(1.0_f32, pal().line)
     };
     p.rect_stroke(
         card,
@@ -1070,7 +1078,7 @@ impl App {
                 ui.vertical_centered(|ui| {
                     Frame::new()
                         .fill(pal().bg)
-                        .stroke(Stroke::new(1.0, pal().line))
+                        .stroke(Stroke::new(1.0_f32, pal().line))
                         .corner_radius(CornerRadius::same(16))
                         .inner_margin(Margin::same(28))
                         .show(ui, |ui| {
@@ -1391,7 +1399,7 @@ impl App {
                         );
                         p.line_segment(
                             [c + egui::vec2(-6.0, -6.0), c + egui::vec2(6.0, 6.0)],
-                            Stroke::new(1.5, pal().red),
+                            Stroke::new(1.5_f32, pal().red),
                         );
                         x -= 18.0;
                     };
@@ -1820,14 +1828,14 @@ impl App {
                                     egui::pos2(rect.left(), y),
                                     egui::pos2(rect.center().x - tw / 2.0, y),
                                 ],
-                                Stroke::new(1.0, pal().line),
+                                Stroke::new(1.0_f32, pal().line),
                             );
                             p.line_segment(
                                 [
                                     egui::pos2(rect.center().x + tw / 2.0, y),
                                     egui::pos2(rect.right(), y),
                                 ],
-                                Stroke::new(1.0, pal().line),
+                                Stroke::new(1.0_f32, pal().line),
                             );
                             p.galley(rect.center() - galley.size() / 2.0, galley, pal().faint);
                         });
@@ -1894,7 +1902,7 @@ impl App {
                                             painter.rect_stroke(
                                                 rect,
                                                 CornerRadius::same(8),
-                                                Stroke::new(1.0, pal().line),
+                                                Stroke::new(1.0_f32, pal().line),
                                                 egui::StrokeKind::Inside,
                                             );
                                             let label = match state {
@@ -1944,7 +1952,7 @@ impl App {
                 for (i, p) in self.att.pending.iter().enumerate() {
                     Frame::new()
                         .fill(pal().raised)
-                        .stroke(Stroke::new(1.0, pal().line))
+                        .stroke(Stroke::new(1.0_f32, pal().line))
                         .corner_radius(CornerRadius::same(10))
                         .inner_margin(Margin::same(6))
                         .show(ui, |ui| {
@@ -1994,7 +2002,7 @@ impl App {
 
         Frame::new()
             .fill(pal().raised)
-            .stroke(Stroke::new(1.0, pal().line))
+            .stroke(Stroke::new(1.0_f32, pal().line))
             .corner_radius(CornerRadius::same(12))
             .inner_margin(Margin {
                 left: 4,
@@ -2127,7 +2135,7 @@ impl App {
             .show(ctx, |ui| {
                 Frame::popup(ui.style())
                     .fill(pal().raised)
-                    .stroke(Stroke::new(1.0, pal().line))
+                    .stroke(Stroke::new(1.0_f32, pal().line))
                     .inner_margin(Margin::same(8))
                     .show(ui, |ui| {
                         egui::Grid::new("emoji_grid")
@@ -2358,7 +2366,7 @@ impl App {
                 p.rect_stroke(
                     inner,
                     CornerRadius::same(16),
-                    Stroke::new(2.0, pal().accent),
+                    Stroke::new(2.0_f32, pal().accent),
                     egui::StrokeKind::Inside,
                 );
                 let text = if self.att.server_supports {
@@ -2533,7 +2541,7 @@ impl App {
                                     egui::pos2(x, rect.top() - 3.0),
                                     egui::pos2(x, rect.bottom() + 3.0),
                                 ],
-                                Stroke::new(2.0, pal().accent),
+                                Stroke::new(2.0_f32, pal().accent),
                             );
                         }
                         let hint = if self.input.is_some() {
@@ -2804,7 +2812,10 @@ impl App {
             .show(ctx, |ui| {
                 Frame::new()
                     .fill(pal().raised_2)
-                    .stroke(Stroke::new(1.0, if error { pal().red } else { pal().line }))
+                    .stroke(Stroke::new(
+                        1.0_f32,
+                        if error { pal().red } else { pal().line },
+                    ))
                     .corner_radius(CornerRadius::same(18))
                     .inner_margin(Margin::symmetric(16, 8))
                     .shadow(ctx.style().visuals.popup_shadow)

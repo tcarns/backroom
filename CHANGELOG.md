@@ -2,6 +2,11 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.5.0
+
+- The server updates itself: it downloads and checks the new version, then restarts once nobody is in voice. The app shows "The server is updating…" and reconnects on its own. Type `update` in the server window to do it right away. (This one server update, from 0.4.0 or earlier, still has to be done by hand.)
+- If the server ever crashes, it starts itself again.
+
 ## 0.4.0
 
 - Update from inside the app: click **Update now** and Backroom downloads the new version, checks it, installs it and restarts, putting you back in your voice channel. (This one update, from 0.3.0, still has to be done by hand.)

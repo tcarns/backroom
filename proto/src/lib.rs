@@ -166,6 +166,12 @@ pub enum ServerMsg {
     AttachmentGone {
         id: String,
     },
+    /// The server is about to restart (e.g. to finish updating to `version`).
+    /// Clients reconnect on their own; older ones ignore this message.
+    Restarting {
+        #[serde(default)]
+        version: String,
+    },
 }
 
 pub const FEATURE_ATTACHMENTS: &str = "attachments";
