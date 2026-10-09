@@ -2,6 +2,10 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.4.0
+
+- Update from inside the app: click **Update now** and Backroom downloads the new version, checks it, installs it and restarts, putting you back in your voice channel. (This one update, from 0.3.0, still has to be done by hand.)
+
 ## 0.3.0
 
 - Send images: click +, drag one onto the window, or paste with Ctrl+V. Big photos are shrunk before sending; click an image to see it full size.

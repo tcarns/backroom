@@ -9,6 +9,7 @@ use backroom::audio::{self, DeviceList};
 use backroom::keys::{self, GlobalKeys};
 use backroom::net::{self, Net, NetEvent, Wake};
 use backroom::settings::Settings;
+use backroom::updater::{self, Phase, Updater};
 use backroom::voice::{chime, Mixer, VoiceControls};
 use backroom::{emoji, images};
 use eframe::egui::{
@@ -30,6 +31,9 @@ use theme::pal;
 // ---------------------------------------------------------------- palette
 
 fn main() -> eframe::Result {
+    // Handed over by the previous copy when it restarts us after an update.
+    let resume = updater::take_resume();
+    let just_updated = std::env::args().any(|a| a == "--updated");
     let settings = Settings::load();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -44,7 +48,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Backroom",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, settings)))),
+        Box::new(move |cc| Ok(Box::new(App::new(cc, settings, resume, just_updated)))),
     )
 }
 
@@ -198,6 +202,8 @@ struct App {
     update_auto_started: bool,
     update_dismissed: Option<String>,
     att: Attachments,
+    updater: Updater,
+    update_failure_shown: Option<String>,
     emoji_open: bool,
     last_paste: Option<Instant>,
     v_press_seen: bool,
@@ -206,7 +212,12 @@ struct App {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext<'_>, s: Settings) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        s: Settings,
+        resume: Option<updater::Resume>,
+        just_updated: bool,
+    ) -> Self {
         theme::apply(&cc.egui_ctx, &s.theme);
         emoji::install_font(&cc.egui_ctx);
         let ctx = cc.egui_ctx.clone();
@@ -252,6 +263,8 @@ impl App {
             update_auto_started: false,
             update_dismissed: None,
             att,
+            updater: Updater::default(),
+            update_failure_shown: None,
             emoji_open: false,
             last_paste: None,
             v_press_seen: false,
@@ -263,12 +276,30 @@ impl App {
             app.update_auto_started = true;
             spawn_update_check(app.update.clone(), app.wake.clone(), true);
         }
-        if app.s.auto_connect
+        updater::cleanup_leftovers();
+        if let Some(r) = resume.filter(|r| !r.server.is_empty() && !r.name.is_empty()) {
+            // Restarted by an update: sign back in and go back to where we were.
+            app.s.server = r.server;
+            app.s.name = r.name;
+            app.s.password = r.password;
+            app.want_voice = r.voice;
+            if let Some(t) = r.text_channel {
+                app.current_text = t;
+            }
+            app.connect();
+        } else if app.s.auto_connect
             && app.s.remember
             && !app.s.server.is_empty()
             && !app.s.name.is_empty()
         {
             app.connect();
+        }
+        if just_updated {
+            app.show_banner(
+                format!("Updated to Backroom {}.", updates::CURRENT),
+                false,
+                Some(8),
+            );
         }
         app
     }
@@ -1599,25 +1630,125 @@ impl App {
                         RichText::new(format!("You have {}.", updates::CURRENT)).color(pal().muted),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("Later").clicked() {
+                        if !self.updater.busy() && ui.button("Later").clicked() {
                             self.update_dismissed = Some(r.version.clone());
                         }
-                        let btn = egui::Button::new(
-                            RichText::new("Download").color(pal().accent_ink).strong(),
-                        )
-                        .fill(pal().accent);
-                        let resp = ui.add(btn);
-                        let resp = if r.notes.is_empty() {
-                            resp
-                        } else {
-                            resp.on_hover_text(format!("What's new:\n{}", r.notes))
-                        };
-                        if resp.clicked() {
-                            ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
-                        }
+                        self.update_controls(ui, &r);
                     });
                 });
             });
+    }
+
+    /// "Update now" and its progress, or "Download" when this build can't update itself.
+    /// Laid out right to left (callers use a right-to-left layout).
+    fn update_controls(&mut self, ui: &mut egui::Ui, r: &Release) {
+        let primary = |t: &str| {
+            egui::Button::new(RichText::new(t).color(pal().accent_ink).strong()).fill(pal().accent)
+        };
+        match self.updater.phase() {
+            Phase::Idle => {
+                if updater::can_install(r) {
+                    let mut tip = format!(
+                        "Downloads Backroom {}, installs it and restarts the app.",
+                        r.version
+                    );
+                    if let Some(ch) = &self.voice_channel {
+                        tip.push_str(&format!(" You'll rejoin {ch} automatically."));
+                    }
+                    if !r.notes.is_empty() {
+                        tip.push_str(&format!("\n\nWhat's new:\n{}", r.notes));
+                    }
+                    if ui.add(primary("Update now")).on_hover_text(tip).clicked() {
+                        self.updater.start(r.clone(), self.wake.clone());
+                    }
+                } else {
+                    let resp = ui.add(primary("Download"));
+                    let resp = if r.notes.is_empty() {
+                        resp
+                    } else {
+                        resp.on_hover_text(format!("What's new:\n{}", r.notes))
+                    };
+                    if resp.clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
+                    }
+                }
+            }
+            Phase::Downloading { done, total } => {
+                let frac = if total > 0 {
+                    done as f32 / total as f32
+                } else {
+                    0.0
+                };
+                ui.add(
+                    egui::ProgressBar::new(frac)
+                        .desired_width(160.0)
+                        .fill(pal().accent)
+                        .text(RichText::new(format!("{:.0}%", frac * 100.0)).color(pal().text)),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "Downloading {}",
+                        images::size_label(total.max(done))
+                    ))
+                    .color(pal().muted),
+                );
+            }
+            Phase::Verifying => {
+                ui.label(RichText::new("Checking the download…").color(pal().muted));
+                ui.add(egui::Spinner::new().color(pal().muted));
+            }
+            Phase::Installing => {
+                ui.label(RichText::new("Installing…").color(pal().muted));
+                ui.add(egui::Spinner::new().color(pal().muted));
+            }
+            Phase::Ready { .. } => {
+                ui.label(RichText::new("Restarting…").color(pal().muted));
+                ui.add(egui::Spinner::new().color(pal().muted));
+            }
+            Phase::Failed(msg) => {
+                if ui.button("Download manually").clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
+                }
+                if ui.add(primary("Try again")).clicked() {
+                    self.updater.reset();
+                    self.updater.start(r.clone(), self.wake.clone());
+                }
+                ui.label(
+                    RichText::new("Update didn't finish.")
+                        .color(pal().red)
+                        .size(13.0),
+                )
+                .on_hover_text(format!(
+                    "{msg}\n\nNothing was changed; your current version still works."
+                ));
+            }
+        }
+    }
+
+    /// The update is installed: start the new copy (it signs back in and rejoins voice) and close.
+    fn restart_into_update(&mut self, exe: std::path::PathBuf) {
+        let resume = updater::Resume {
+            server: self.s.server.clone(),
+            name: self.s.name.clone(),
+            password: self.s.password.clone(),
+            voice: self
+                .voice_channel
+                .clone()
+                .or_else(|| self.want_voice.clone()),
+            text_channel: Some(self.current_text.clone()),
+        };
+        self.s.save();
+        match updater::relaunch(&exe, &resume) {
+            Ok(()) => {
+                self.net.disconnect();
+                std::thread::sleep(Duration::from_millis(200));
+                std::process::exit(0);
+            }
+            Err(e) => {
+                self.updater.reset();
+                self.show_banner(format!("Backroom was updated but couldn't restart itself ({e}). Close it and open it again."), true, None);
+            }
+        }
     }
 
     fn messages(&mut self, ui: &mut egui::Ui) {
@@ -2589,20 +2720,19 @@ impl App {
                             );
                         });
                         ui.horizontal(|ui| {
-                            if let Some(r) = &latest {
-                                let btn = egui::Button::new(
-                                    RichText::new("Download").color(pal().accent_ink).strong(),
-                                )
-                                .fill(pal().accent);
-                                if ui.add(btn).clicked() {
-                                    ui.ctx().open_url(egui::OpenUrl::new_tab(&r.url));
-                                }
-                            }
                             if ui
-                                .add_enabled(!checking, egui::Button::new("Check now"))
+                                .add_enabled(
+                                    !checking && !self.updater.busy(),
+                                    egui::Button::new("Check now"),
+                                )
                                 .clicked()
                             {
                                 spawn_update_check(self.update.clone(), self.wake.clone(), false);
+                            }
+                            if let Some(r) = &latest {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    self.update_controls(ui, r)
+                                });
                             }
                         });
                         if ui
@@ -2699,6 +2829,16 @@ impl eframe::App for App {
         self.handle_events(ctx);
         self.handle_keys(ctx);
         self.handle_image_input(ctx);
+        match self.updater.phase() {
+            Phase::Ready { exe, .. } => self.restart_into_update(exe),
+            Phase::Failed(msg) if self.update_failure_shown.as_deref() != Some(msg.as_str()) => {
+                // The bar only has room for a short note; show the whole explanation once.
+                self.show_banner(format!("The update didn't finish: {msg}"), true, Some(15));
+                self.update_failure_shown = Some(msg);
+            }
+            Phase::Idle | Phase::Downloading { .. } => self.update_failure_shown = None,
+            _ => {}
+        }
         self.sync_audio();
 
         if self.session.is_some() && self.conn != Conn::Offline {

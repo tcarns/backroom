@@ -74,7 +74,12 @@ jobs:
           mkdir -p dist/Backroom
           cp target/x86_64-pc-windows-gnu/release/backroom.exe target/x86_64-pc-windows-gnu/release/backroom-server.exe dist/Backroom/
           sed 's/$/\r/' README.md > dist/Backroom/README.txt
-          cd dist && zip -r "Backroom-$TAG-windows.zip" Backroom
+          cd dist
+          zip -r "Backroom-$TAG-windows.zip" Backroom
+          # The raw programs are what the app downloads when it updates itself.
+          cp Backroom/backroom.exe Backroom/backroom-server.exe .
+          sha256sum backroom.exe backroom-server.exe "Backroom-$TAG-windows.zip" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Release notes from CHANGELOG.md
         if: steps.version.outputs.new == 'true'
@@ -91,5 +96,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$TAG" "dist/Backroom-$TAG-windows.zip" \
+          gh release create "$TAG" "dist/Backroom-$TAG-windows.zip" dist/backroom.exe dist/backroom-server.exe dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" --title "Backroom ${TAG#v}" --notes-file notes.md

@@ -107,12 +107,23 @@ The app reports problems only it can see, so they show up in your server log:
 
 ## Updates
 
-When a new version is published, the app shows a bar saying "Backroom X is available", with a Download button that opens the release page. The server writes the same notice in its window. Both check when they start and every 6 hours after that. You can also check from the app's settings, or turn automatic checks off there. On the server, set `check_updates = false` in `backroom-server.toml`.
+The app and server check for a new version when they start and every 6 hours after that. You can also check from the app's settings, or turn automatic checks off there. On the server, set `check_updates = false` in `backroom-server.toml`.
 
-To update:
-1. Download the new zip.
-2. Close Backroom.
-3. Replace `backroom.exe` (or `backroom-server.exe`) with the new one. Your settings, chat history and logs are kept.
+**The app updates itself.** When a new version is out, a bar says "Backroom X is available". Click **Update now**, and the app:
+1. downloads the new version, with a progress bar
+2. checks it against the release's checksum file, so a broken or incomplete download is never installed
+3. replaces itself and restarts, signing back in and rejoining your voice channel
+
+If anything goes wrong, nothing is changed. The bar offers **Try again** and **Download manually**, and the full reason appears in a message.
+
+For updating to work, `backroom.exe` has to be in a folder you can save files in, like Desktop, Documents or Downloads. A folder like Program Files won't work. While updating, the old copy is briefly kept next to it as `backroom.exe.old` and removed on the next start.
+
+In-app updating started with 0.4.0, so going from 0.3.0 to 0.4.0 is done by hand: download the zip and replace `backroom.exe`.
+
+**The server** writes a notice in its window when there's a new version. To update it:
+1. Download the new zip from the release page.
+2. Close the server.
+3. Replace `backroom-server.exe`. Settings, chat history, images and logs are kept.
 
 ## Publishing a new version
 
@@ -120,7 +131,7 @@ To update:
 2. Add a section for that version at the top of `CHANGELOG.md`. It becomes the release notes people see.
 3. Commit and push to `main`.
 
-GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
+GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. The release includes the zip, the two `.exe` files (what the app downloads when it updates itself) and `SHA256SUMS.txt`, the checksums the app verifies against. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
 
 ## Building from source
 

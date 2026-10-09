@@ -7,4 +7,5 @@ pub mod images;
 pub mod keys;
 pub mod net;
 pub mod settings;
+pub mod updater;
 pub mod voice;

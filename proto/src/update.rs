@@ -21,6 +21,32 @@ pub struct Release {
     pub url: String,
     /// What changed, as written in the release notes (trimmed).
     pub notes: String,
+    /// Files attached to the release (the zip, the raw .exe files, SHA256SUMS.txt).
+    pub assets: Vec<Asset>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Asset {
+    pub name: String,
+    /// Direct download link.
+    pub url: String,
+    pub size: u64,
+}
+
+impl Release {
+    pub fn asset(&self, name: &str) -> Option<&Asset> {
+        self.assets.iter().find(|a| a.name.eq_ignore_ascii_case(name))
+    }
+}
+
+/// An HTTPS client using the operating system's TLS (SChannel on Windows).
+pub fn agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build()
+        .into()
 }
 
 pub fn releases_page() -> String {
@@ -55,16 +81,7 @@ pub fn check_against(current: &str) -> Result<Option<Release>, String> {
     // BACKROOM_UPDATE_URL lets tests point this at a local file server.
     let url = std::env::var("BACKROOM_UPDATE_URL")
         .unwrap_or_else(|_| format!("https://api.github.com/repos/{REPO}/releases/latest"));
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .tls_config(
-            ureq::tls::TlsConfig::builder()
-                .provider(ureq::tls::TlsProvider::NativeTls)
-                .build(),
-        )
-        .timeout_global(Some(Duration::from_secs(15)))
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let agent = agent(Duration::from_secs(15));
     let mut resp = agent
         .get(&url)
         .header("User-Agent", &format!("Backroom/{current}"))
@@ -110,6 +127,20 @@ pub fn parse_release(json: &str, current: &str) -> Result<Option<Release>, Strin
             .map(str::to_string)
             .unwrap_or_else(releases_page),
         notes,
+        assets: v["assets"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|a| {
+                        Some(Asset {
+                            name: a["name"].as_str()?.to_string(),
+                            url: a["browser_download_url"].as_str()?.to_string(),
+                            size: a["size"].as_u64().unwrap_or(0),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }))
 }
 
@@ -130,9 +161,21 @@ mod tests {
     }
 
     #[test]
+    fn release_assets() {
+        let json = r#"{"tag_name":"v0.4.0","html_url":"h","body":"","assets":[
+            {"name":"backroom.exe","browser_download_url":"https://github.com/tcarns/backroom/releases/download/v0.4.0/backroom.exe","size":9530368},
+            {"name":"SHA256SUMS.txt","browser_download_url":"https://x/SHA256SUMS.txt","size":300}]}"#;
+        let r = parse_release(json, "0.3.0").unwrap().unwrap();
+        assert_eq!(r.asset("Backroom.exe").unwrap().size, 9530368);
+        assert!(r.asset("SHA256SUMS.txt").is_some());
+        assert!(r.asset("missing.exe").is_none());
+    }
+
+    #[test]
     fn release_json() {
         let json = r#"{"tag_name":"v0.3.0","html_url":"https://github.com/tcarns/backroom/releases/tag/v0.3.0","body":"Screen sharing","draft":false,"prerelease":false}"#;
         let r = parse_release(json, "0.2.0").unwrap().unwrap();
+        assert!(r.assets.is_empty());
         assert_eq!(r.version, "0.3.0");
         assert_eq!(r.notes, "Screen sharing");
         assert_eq!(parse_release(json, "0.3.0").unwrap(), None);
