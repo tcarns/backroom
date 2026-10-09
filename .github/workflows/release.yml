@@ -1,39 +1,62 @@
-# Pushing a tag like v0.2.1 builds the Windows programs and publishes them as a
-# GitHub Release. Running copies of Backroom check for the newest release and
-# tell people an update is available.
+# Publishes a release whenever main has a version (in Cargo.toml) that hasn't
+# been released yet: runs the tests, builds the Windows programs, then creates
+# the vX.Y.Z tag and a GitHub Release with the zip. Running copies of Backroom
+# check for the newest release and tell people an update is available.
+#
+# To publish: raise `version` in Cargo.toml, add a CHANGELOG.md section, push to main.
 
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  windows:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the tag matches the version in Cargo.toml
+      - name: Is this version already released?
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "Tag $GITHUB_REF_NAME doesn't match the version in Cargo.toml ($version)."
-            exit 1
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "v$version is already released; nothing to do."
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "v$version is new; building it."
+            echo "new=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install the Windows cross-compiler
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 cmake
+      - name: Install build tools (audio, Windows cross-compiler)
+        if: steps.version.outputs.new == 'true'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 cmake
 
       - name: Add the Windows target
+        if: steps.version.outputs.new == 'true'
         run: rustup target add x86_64-pc-windows-gnu
 
       - uses: Swatinem/rust-cache@v2
+        if: steps.version.outputs.new == 'true'
+
+      - name: Run the tests
+        if: steps.version.outputs.new == 'true'
+        run: cargo test --workspace
 
       - name: Build backroom.exe and backroom-server.exe
+        if: steps.version.outputs.new == 'true'
         env:
           CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
           CXX_x86_64_pc_windows_gnu: x86_64-w64-mingw32-g++
@@ -44,22 +67,29 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-gnu -p backroom-server --bin backroom-server -p backroom --bin backroom
 
       - name: Package
+        if: steps.version.outputs.new == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           mkdir -p dist/Backroom
           cp target/x86_64-pc-windows-gnu/release/backroom.exe target/x86_64-pc-windows-gnu/release/backroom-server.exe dist/Backroom/
           sed 's/$/\r/' README.md > dist/Backroom/README.txt
-          cd dist && zip -r "Backroom-$GITHUB_REF_NAME-windows.zip" Backroom
+          cd dist && zip -r "Backroom-$TAG-windows.zip" Backroom
 
       - name: Release notes from CHANGELOG.md
+        if: steps.version.outputs.new == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '$0 ~ "^## " { if (found) exit; found = ($2 == v); next } found' CHANGELOG.md > notes.md
+          awk -v v="${TAG#v}" '$0 ~ "^## " { if (found) exit; found = ($2 == v); next } found' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then echo "Bug fixes and improvements." > notes.md; fi
           cat notes.md
 
       - name: Publish the release
+        if: steps.version.outputs.new == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "dist/Backroom-$GITHUB_REF_NAME-windows.zip" \
-            --title "Backroom ${GITHUB_REF_NAME#v}" --notes-file notes.md
+          gh release create "$TAG" "dist/Backroom-$TAG-windows.zip" \
+            --target "$GITHUB_SHA" --title "Backroom ${TAG#v}" --notes-file notes.md

@@ -105,15 +105,9 @@ To update:
 
 1. Raise `version` in `Cargo.toml` (for example `0.2.0` to `0.2.1`).
 2. Add a section for that version at the top of `CHANGELOG.md`. It becomes the release notes people see.
-3. Commit and push, then tag and push the tag:
-   ```
-   git tag v0.2.1
-   git push origin v0.2.1
-   ```
+3. Commit and push to `main`.
 
-GitHub then builds both programs on its own machines and publishes them as a release (the "Release" workflow in the Actions tab). Running copies of Backroom notice it on their next check.
-
-Every push to `main` also runs the tests (the "Tests" workflow).
+GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
 
 ## Building from source
 
