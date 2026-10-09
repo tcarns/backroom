@@ -1,6 +1,7 @@
 //! Backroom client library: voice engine, networking, audio devices, settings.
 //! The desktop app (main.rs) and the headless test bot (bin/bot.rs) both use it.
 
+pub mod applog;
 pub mod audio;
 pub mod emoji;
 pub mod files;

@@ -57,6 +57,10 @@ pub fn agent(timeout: Duration) -> ureq::Agent {
         .tls_config(
             ureq::tls::TlsConfig::builder()
                 .provider(ureq::tls::TlsProvider::NativeTls)
+                // Trust what Windows trusts (its certificate store), the same as the
+                // chat connection. ureq's default is its own built-in list, which
+                // doesn't cover every chain (e.g. some Cloudflare addresses).
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
                 .build(),
         )
         .timeout_global(Some(timeout))

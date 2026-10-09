@@ -118,14 +118,17 @@ Files travel over plain HTTP on the server's port, separately from voice, so a b
 
 ## Logging
 
-Everything is logged to the server window and to `data\backroom.log`. When the log file passes 5 MB, it's renamed to `backroom.log.1` and a fresh one starts.
+**Server:** everything is logged to the server window and to `data\backroom.log` next to `backroom-server.exe`. When the log file passes 5 MB, it's renamed to `backroom.log.1` and a fresh one starts.
+
+**App:** each person's app keeps its own log in `%APPDATA%\Backroom\backroom.log` (Settings → **Open log file**): sign-ins, lost connections, every error the app shows, and each file sent or downloaded, with the server's exact answer when something fails. It's replaced by a fresh one past 2 MB (the previous one is kept as `backroom.log.1`).
 
 | Level | Shows |
 | --- | --- |
 | `trace` | When each person starts and stops talking |
-| `debug` | Chat activity (who posted where, never what they said), mute and deafen, ignored messages |
+| `debug` | Chat activity (who posted where, never what they said), mute and deafen, ignored messages, every file request |
 | `info` | Sign-ins, new accounts, renames, disconnects, voice joins, leaves and moves |
-| `warn` | Wrong passwords, admin actions (kicks, bans, password resets), mic or speaker problems on someone's computer, audio breaking up, people sending too fast |
+| `info` / `warn` | File requests the server refused, and why (who asked, what was wrong) |
+| `warn` | Wrong passwords, admin actions (kicks, bans, password resets), mic or speaker problems on someone's computer, audio breaking up, people sending too fast, files someone couldn't send or open |
 | `error` | App errors reported by someone's computer, saving problems |
 | `critical` | The server crashing or failing to start |
 
@@ -143,6 +146,7 @@ Type these into the server window to change things while it runs:
 The app reports problems only it can see, so they show up in your server log:
 - a microphone or speakers that failed to open or got unplugged
 - someone's audio breaking up repeatedly because of network delay
+- a file someone couldn't send, download or play (with the reason)
 
 ## Updates
 

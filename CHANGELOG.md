@@ -2,6 +2,13 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.7.1
+
+- Fixed sending files and showing images through a Cloudflare address ("Couldn't reach the server (native-tls: unable to find any user-specified roots…)"). File transfers now trust the same certificates Windows does, like the chat connection.
+- Fixed uploads being refused when they come through Cloudflare's tunnel ("Missing or too long request"). The server needs this update too; type `update` in its window to get it right away.
+- If an image can't be fetched the new way, the app asks for it over the chat connection instead, so it still shows.
+- The app now keeps a log: Settings → Open log file. File problems people run into also show up in the server's log.
+
 ## 0.7.0
 
 - Member list on the right, like Discord: who's online (and in which voice channel), then everyone else. The people button at the top of the chat hides it.

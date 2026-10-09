@@ -818,6 +818,7 @@ impl App {
         } else {
             [0, 0]
         };
+        backroom::applog::info(format!("Playing {} ({}) in the chat", a.name, a.mime));
         match Player::open(&path, size, self.s.media_volume, self.wake.clone()) {
             Ok(player) => {
                 self.player = Some(Playing {
@@ -858,6 +859,7 @@ impl App {
         }
         if p.failed.is_none() {
             if let Some(e) = p.player.status().error {
+                backroom::applog::warn(format!("Playing {} failed: {e}", p.id));
                 p.failed = Some(e);
             }
         }

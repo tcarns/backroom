@@ -219,6 +219,11 @@ impl App {
 
     /// The server stopped us signing in (or threw us out).
     pub fn on_failed(&mut self, message: String, code: Option<String>) {
+        backroom::applog::warn(format!(
+            "Couldn't sign in to {}: {message} ({})",
+            self.s.server,
+            code.as_deref().unwrap_or("no code")
+        ));
         self.leave_voice_quietly();
         self.session = None;
         self.conn = Conn::Offline;

@@ -67,6 +67,8 @@ impl Files {
 // ---------------------------------------------------------------- the request head
 
 pub struct Request {
+    /// Who's asking (filled in once the real address is known), for the log.
+    pub ip: String,
     pub method: String,
     pub path: String,
     pub query: String,
@@ -117,6 +119,7 @@ pub async fn read_head(stream: &mut TcpStream) -> Result<(Request, Vec<u8>), Str
                 let target = req.path.unwrap_or("/");
                 let (path, query) = target.split_once('?').unwrap_or((target, ""));
                 let parsed = Request {
+                    ip: String::new(),
                     method: req.method.unwrap_or("").to_string(),
                     path: path.to_string(),
                     query: query.to_string(),
@@ -171,7 +174,18 @@ async fn json<T: serde::Serialize>(stream: &mut TcpStream, status: u16, value: &
     respond(stream, status, "application/json", &body).await;
 }
 
-async fn error(stream: &mut TcpStream, status: u16, code: &str, message: &str) {
+/// Refuse a request, and say so in the log (with who asked) so problems
+/// sending or fetching files can be traced from the server window.
+async fn error(stream: &mut TcpStream, req: &Request, status: u16, code: &str, message: &str) {
+    let what = format!(
+        "Refused {} {} from {} ({status} {code}): {message}",
+        req.method, req.path, req.ip
+    );
+    match status {
+        // The app's own mistakes or a proxy changing requests: worth noticing.
+        400 | 411 | 413 | 507 => warn!("files", "{what}"),
+        _ => info!("files", "{what}"),
+    }
     json(
         stream,
         status,
@@ -203,11 +217,13 @@ fn valid_id(id: &str) -> bool {
 /// A plain HTTP request (anything but the WebSocket).
 pub async fn handle(
     mut stream: TcpStream,
-    req: Request,
+    mut req: Request,
     body_start: Vec<u8>,
     ip: String,
     shared: Shared,
 ) {
+    req.ip = ip.clone();
+    debug!("http", "{ip}: {} {}", req.method, req.path);
     let path = req.path.trim_end_matches('/');
     match (req.method.as_str(), path) {
         ("GET" | "HEAD", "") => {
@@ -230,13 +246,96 @@ pub async fn handle(
                 "http",
                 "{ip} asked for {} {} (not found)", req.method, req.path
             );
-            error(&mut stream, 404, "not_found", "Nothing here.").await;
+            error(&mut stream, &req, 404, "not_found", "Nothing here.").await;
         }
     }
 }
 
-fn content_length(req: &Request) -> Option<u64> {
-    req.header("content-length")?.parse().ok()
+enum BodySize {
+    Known(u64),
+    /// `Transfer-Encoding: chunked`, which is how Cloudflare's tunnel passes
+    /// request bodies on by default.
+    Chunked,
+}
+
+fn body_size(req: &Request) -> Option<BodySize> {
+    if req
+        .header("transfer-encoding")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("chunked"))
+    {
+        return Some(BodySize::Chunked);
+    }
+    req.header("content-length")?
+        .parse()
+        .ok()
+        .map(BodySize::Known)
+}
+
+/// Read more bytes into `buf` until it holds at least `n`.
+async fn fill<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+    n: usize,
+) -> Result<(), String> {
+    let mut chunk = [0u8; 16 * 1024];
+    while buf.len() < n {
+        let got = tokio::time::timeout(IDLE, r.read(&mut chunk))
+            .await
+            .map_err(|_| "timed out".to_string())?
+            .map_err(|e| e.to_string())?;
+        if got == 0 {
+            return Err("the connection closed".into());
+        }
+        buf.extend_from_slice(&chunk[..got]);
+    }
+    Ok(())
+}
+
+/// Take one CRLF-terminated line off the front of `buf`.
+async fn take_line<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+) -> Result<String, String> {
+    loop {
+        if let Some(i) = buf.windows(2).position(|w| w == b"\r\n") {
+            let line = String::from_utf8_lossy(&buf[..i]).to_string();
+            buf.drain(..i + 2);
+            return Ok(line);
+        }
+        if buf.len() > 8 * 1024 {
+            return Err("a line in the request was too long".into());
+        }
+        let want = buf.len() + 1;
+        fill(r, buf, want).await?;
+    }
+}
+
+/// Read a whole chunked body (up to `max` bytes). `buf` holds what's already read.
+async fn read_chunked<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    mut buf: Vec<u8>,
+    max: usize,
+) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    loop {
+        let line = take_line(r, &mut buf).await?;
+        let hex = line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(hex, 16).map_err(|_| format!("bad chunk size {hex:?}"))?;
+        if size == 0 {
+            // Optional trailers, then a blank line.
+            while !take_line(r, &mut buf).await?.is_empty() {}
+            return Ok(out);
+        }
+        if out.len() + size > max {
+            return Err(format!("the body is over {max} bytes"));
+        }
+        fill(r, &mut buf, size + 2).await?;
+        if &buf[size..size + 2] != b"\r\n" {
+            return Err("a chunk didn't end where it said".into());
+        }
+        out.extend_from_slice(&buf[..size]);
+        buf.drain(..size + 2);
+    }
 }
 
 /// Read exactly `len` body bytes (starting with what came with the head).
@@ -256,14 +355,37 @@ async fn read_body(stream: &mut TcpStream, mut start: Vec<u8>, len: u64) -> Opti
 // ---------------------------------------------------------------- uploads
 
 async fn create(stream: &mut TcpStream, req: &Request, body: Vec<u8>, ip: &str, shared: &Shared) {
-    let Some(len) = content_length(req).filter(|n| *n <= 4096) else {
-        return error(stream, 411, "bad_request", "Missing or too long request.").await;
-    };
-    let Some(body) = read_body(stream, body, len).await else {
-        return;
+    let body = match body_size(req) {
+        Some(BodySize::Known(len)) if len <= 4096 => match read_body(stream, body, len).await {
+            Some(b) => b,
+            None => return,
+        },
+        Some(BodySize::Chunked) => match read_chunked(stream, body, 4096).await {
+            Ok(b) => b,
+            Err(e) => {
+                return error(
+                    stream,
+                    req,
+                    400,
+                    "bad_request",
+                    &format!("Couldn't read the request ({e})."),
+                )
+                .await
+            }
+        },
+        _ => {
+            return error(
+                stream,
+                req,
+                411,
+                "bad_request",
+                "Missing or too long request.",
+            )
+            .await
+        }
     };
     let Ok(new) = serde_json::from_slice::<NewUpload>(&body) else {
-        return error(stream, 400, "bad_request", "Unreadable request.").await;
+        return error(stream, req, 400, "bad_request", "Unreadable request.").await;
     };
     let answer = start_upload(&mut shared.lock().unwrap(), req, &new, ip);
     match answer {
@@ -276,11 +398,18 @@ async fn create(stream: &mut TcpStream, req: &Request, body: Vec<u8>, ip: &str, 
             if let Err(e) = made {
                 error!("files", "Couldn't save files in {} ({e})", dir.display());
                 shared.lock().unwrap().files.uploads.remove(&id);
-                return error(stream, 507, "disk", "The server couldn't save the file.").await;
+                return error(
+                    stream,
+                    req,
+                    507,
+                    "disk",
+                    "The server couldn't save the file.",
+                )
+                .await;
             }
             json(stream, 200, &UploadCreated { id, chunk: CHUNK }).await;
         }
-        Err((status, code, message)) => error(stream, status, code, &message).await,
+        Err((status, code, message)) => error(stream, req, status, code, &message).await,
     }
 }
 
@@ -379,21 +508,43 @@ async fn receive(stream: &mut TcpStream, req: &Request, body: Vec<u8>, id: &str,
         .query_param("offset")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let Some(len) = content_length(req).filter(|n| *n > 0 && *n <= CHUNK) else {
-        return error(
-            stream,
-            411,
-            "bad_request",
-            "Each piece must be 1 byte to 4 MB.",
-        )
-        .await;
+    // A piece either says its length (then it's written as it arrives) or comes
+    // chunked through a proxy (then it's read whole first; pieces are small).
+    let (len, body) = match body_size(req) {
+        Some(BodySize::Known(n)) if n > 0 && n <= CHUNK => (n, body),
+        Some(BodySize::Chunked) => match read_chunked(stream, body, CHUNK as usize).await {
+            Ok(b) if !b.is_empty() => (b.len() as u64, b),
+            Ok(_) => {
+                return error(stream, req, 400, "bad_request", "An empty piece of a file.").await
+            }
+            Err(e) => {
+                return error(
+                    stream,
+                    req,
+                    400,
+                    "bad_request",
+                    &format!("Couldn't read a piece of the file ({e})."),
+                )
+                .await
+            }
+        },
+        _ => {
+            return error(
+                stream,
+                req,
+                411,
+                "bad_request",
+                "Each piece must be 1 byte to 4 MB.",
+            )
+            .await
+        }
     };
     let claim = claim_piece(&mut shared.lock().unwrap(), req, id, offset, len);
     let path = match claim {
         Claim::Write(p) => p,
         Claim::Conflict(p) => return json(stream, 409, &p).await,
         Claim::Refuse((status, code, message)) => {
-            return error(stream, status, code, &message).await
+            return error(stream, req, status, code, &message).await
         }
     };
     // Write the piece as it arrives, without holding the lock.
@@ -401,7 +552,7 @@ async fn receive(stream: &mut TcpStream, req: &Request, body: Vec<u8>, id: &str,
     let answer = finish_piece(&mut shared.lock().unwrap(), id, &path, offset, len, written);
     match answer {
         Some(Ok(progress)) => json(stream, 200, &progress).await,
-        Some(Err((status, code, message))) => error(stream, status, code, &message).await,
+        Some(Err((status, code, message))) => error(stream, req, status, code, &message).await,
         None => {} // interrupted; the app retries from `received`
     }
 }
@@ -556,14 +707,30 @@ async fn send(stream: &mut TcpStream, req: &Request, id: &str, shared: &Shared) 
     };
     let ((mime, _name, _), path) = match found {
         Ok(f) => f,
-        Err((401, code)) => return error(stream, 401, code, "Sign in again.").await,
+        Err((401, code)) => return error(stream, req, 401, code, "Sign in again.").await,
         Err((status, code)) => {
-            return error(stream, status, code, "This file is no longer available.").await
+            return error(
+                stream,
+                req,
+                status,
+                code,
+                "This file is no longer available.",
+            )
+            .await
         }
     };
     let mut file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
-        Err(_) => return error(stream, 404, "gone", "This file is no longer available.").await,
+        Err(_) => {
+            return error(
+                stream,
+                req,
+                404,
+                "gone",
+                "This file is no longer available.",
+            )
+            .await
+        }
     };
     let total = file.metadata().await.map(|m| m.len()).unwrap_or(0);
     // "Range: bytes=N-" (or N-M) resumes an interrupted download.
@@ -814,6 +981,39 @@ pub fn sweep(st: &mut State) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn chunked_bodies() {
+        // Some already read with the head, the rest still to come.
+        let mut rest: &[u8] = b"lo\r\n6;ext=1\r\n world\r\n0\r\nX-Trailer: 1\r\n\r\nNEXT";
+        let got = read_chunked(&mut rest, b"5\r\nhel".to_vec(), 100)
+            .await
+            .unwrap();
+        assert_eq!(got, b"hello world");
+        let mut r: &[u8] = b"";
+        assert!(
+            read_chunked(&mut r, b"5\r\nhello\r\n0\r\n\r\n".to_vec(), 4)
+                .await
+                .is_err(),
+            "over the limit"
+        );
+        let mut r: &[u8] = b"";
+        assert!(read_chunked(&mut r, b"zz\r\n".to_vec(), 100).await.is_err());
+        let mut r: &[u8] = b"";
+        assert!(
+            read_chunked(&mut r, b"5\r\nhel".to_vec(), 100)
+                .await
+                .is_err(),
+            "cut off"
+        );
+        let mut r: &[u8] = b"";
+        assert_eq!(
+            read_chunked(&mut r, b"0\r\n\r\n".to_vec(), 100)
+                .await
+                .unwrap(),
+            b""
+        );
+    }
 
     #[test]
     fn ids() {

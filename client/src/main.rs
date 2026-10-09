@@ -96,6 +96,11 @@ fn main() -> eframe::Result {
     let resume = updater::take_resume();
     let just_updated = std::env::args().any(|a| a == "--updated");
     let settings = Settings::load();
+    backroom::applog::info(format!(
+        "Backroom {} started (log: {})",
+        updates::CURRENT,
+        backroom::applog::path().display()
+    ));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Backroom")
@@ -510,8 +515,17 @@ impl App {
     }
 
     fn show_banner(&mut self, text: impl Into<String>, error: bool, secs: Option<u64>) {
+        let text = text.into();
+        // Everything the app tells the person goes in its log too.
+        if self.banner.as_ref().is_none_or(|b| b.text != text) {
+            if error {
+                backroom::applog::warn(format!("Shown: {text}"));
+            } else {
+                backroom::applog::info(format!("Shown: {text}"));
+            }
+        }
         self.banner = Some(Banner {
-            text: text.into(),
+            text,
             error,
             until: secs.map(|s| Instant::now() + Duration::from_secs(s)),
         });
@@ -603,6 +617,7 @@ impl App {
                 }
                 NetEvent::Failed { message, code } => self.on_failed(message, code),
                 NetEvent::Reconnecting { reason } => {
+                    backroom::applog::warn(format!("Connection lost ({reason}); reconnecting"));
                     if let Some(ch) = self.voice_channel.clone() {
                         self.want_voice = Some(ch);
                     }
@@ -662,6 +677,20 @@ impl App {
                 {
                     self.att.reset_for_server();
                 }
+                backroom::applog::info(format!(
+                    "Signed in to {} as {name}. Files: {}",
+                    self.s.server,
+                    match &endpoint {
+                        Some(e) => format!(
+                            "any kind, up to {}, via {}",
+                            proto::files::size_label(max_attachment_bytes),
+                            e.base
+                        ),
+                        None if self.att.server_supports =>
+                            "images only (the server is older than 0.7)".to_string(),
+                        None => "none (the server is too old)".to_string(),
+                    }
+                ));
                 self.att.endpoint = endpoint;
                 if max_attachment_bytes > 0 {
                     self.att.max_bytes = max_attachment_bytes;
@@ -2302,7 +2331,14 @@ impl App {
         }
         let (notes, finished) = self.att.poll(ctx);
         for (text, error) in notes {
-            self.show_banner(text, error, Some(6));
+            if error && self.conn == Conn::Online {
+                // So whoever runs the server sees it in their log too.
+                self.net.send(ClientMsg::Report {
+                    kind: "files".into(),
+                    message: text.clone(),
+                });
+            }
+            self.show_banner(text, error, Some(if error { 15 } else { 6 }));
         }
         self.on_fetched(ctx, finished);
         // Uploads that finished: post their message.
@@ -2736,6 +2772,13 @@ impl App {
                                 spawn_update_check(self.update.clone(), self.wake.clone(), true);
                             }
                             self.s.save();
+                        }
+                        if ui
+                            .button("Open log file")
+                            .on_hover_text(backroom::applog::path().display().to_string())
+                            .clicked()
+                        {
+                            let _ = backroom::files::open_path(&backroom::applog::path());
                         }
                         ui.add_space(4.0);
                         ui.add(

@@ -179,6 +179,9 @@ pub struct Attachments {
     pub max_bytes: u64,
     /// Upload finished: post this message (channel, text, files).
     pub ready_to_post: Vec<ClientMsg>,
+    /// Images already asked for over the WebSocket after HTTP failed (so we
+    /// don't ask twice).
+    ws_fallback: std::collections::HashSet<String>,
     tx: Sender<Work>,
     rx: Receiver<Work>,
     wake: Wake,
@@ -218,6 +221,7 @@ impl Attachments {
             endpoint: None,
             max_bytes: 8 * 1024 * 1024,
             ready_to_post: Vec::new(),
+            ws_fallback: std::collections::HashSet::new(),
             tx,
             rx,
             wake,
@@ -681,9 +685,12 @@ impl Attachments {
                             }
                         }
                     }
-                    Err(_) => {
-                        self.images
-                            .insert(id, ImgState::Failed("Couldn't show this image.".into()));
+                    Err(e) => {
+                        if !self.fall_back_to_websocket(&id, &e) {
+                            backroom::applog::warn(format!("Couldn't show image {id}: {e}"));
+                            self.images
+                                .insert(id, ImgState::Failed("Couldn't show this image.".into()));
+                        }
                     }
                 },
                 Work::Anim { id, result } => match result {
@@ -721,9 +728,16 @@ impl Attachments {
                             }
                         }
                     }
-                    _ => {
+                    Ok(_) => {
                         self.images
                             .insert(id, ImgState::Failed("Couldn't show this GIF.".into()));
+                    }
+                    Err(e) => {
+                        if !self.fall_back_to_websocket(&id, &e) {
+                            backroom::applog::warn(format!("Couldn't show GIF {id}: {e}"));
+                            self.images
+                                .insert(id, ImgState::Failed("Couldn't show this GIF.".into()));
+                        }
                     }
                 },
                 Work::Full { id, result } => {
@@ -809,6 +823,24 @@ impl Attachments {
             }
         });
         (notes, finished)
+    }
+}
+
+impl Attachments {
+    /// Fetching an image over HTTP failed: ask for it the older way, over the
+    /// chat connection (servers send images up to 16 MB that way). Returns
+    /// false if that was already tried.
+    fn fall_back_to_websocket(&mut self, id: &str, error: &str) -> bool {
+        if self.endpoint.is_none() || !self.ws_fallback.insert(id.to_string()) {
+            return false;
+        }
+        backroom::applog::warn(format!(
+            "Fetching image {id} over HTTP failed ({error}); asking over the chat connection instead"
+        ));
+        self.images.insert(id.to_string(), ImgState::Requested);
+        self.ready_to_post
+            .push(ClientMsg::GetAttachment { id: id.to_string() });
+        true
     }
 }
 

@@ -27,6 +27,10 @@ fn agent() -> ureq::Agent {
         .tls_config(
             ureq::tls::TlsConfig::builder()
                 .provider(ureq::tls::TlsProvider::NativeTls)
+                // Trust what Windows trusts (its certificate store), the same as the
+                // chat connection. ureq's default is its own built-in list, which
+                // doesn't cover every chain (e.g. some Cloudflare addresses).
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
                 .build(),
         )
         .timeout_connect(Some(Duration::from_secs(15)))
@@ -42,8 +46,10 @@ fn user_agent() -> String {
     format!("Backroom/{}", proto::update::CURRENT)
 }
 
-/// Turn an error answer into a sentence.
+/// Turn an error answer into a sentence (and log exactly what came back).
 fn explain(status: u16, body: &str) -> String {
+    let snippet: String = body.chars().take(300).collect();
+    crate::applog::warn(format!("The server answered {status}: {snippet}"));
     match serde_json::from_str::<HttpError>(body) {
         Ok(e) => e.message,
         Err(_) => format!("The server answered with an error ({status})."),
@@ -68,6 +74,31 @@ impl Source {
 /// Upload one file. `progress` gets the bytes sent so far. Returns the upload id
 /// (to put in a `Post` message).
 pub fn upload(
+    to: &Endpoint,
+    name: &str,
+    source: &Source,
+    progress: &dyn Fn(u64),
+    cancel: &AtomicBool,
+) -> Result<String, String> {
+    let started = std::time::Instant::now();
+    let size = source.size().unwrap_or(0);
+    crate::applog::info(format!(
+        "Sending {name} ({}) to {}",
+        proto::files::size_label(size),
+        to.base
+    ));
+    let result = upload_inner(to, name, source, progress, cancel);
+    match &result {
+        Ok(id) => crate::applog::info(format!(
+            "Sent {name} in {:.1} s (upload {id})",
+            started.elapsed().as_secs_f32()
+        )),
+        Err(e) => crate::applog::warn(format!("Sending {name} failed: {e}")),
+    }
+    result
+}
+
+fn upload_inner(
     to: &Endpoint,
     name: &str,
     source: &Source,
@@ -132,7 +163,12 @@ pub fn upload(
                 r.status().as_u16(),
                 r.body_mut().read_to_string().unwrap_or_default(),
             ),
-            Err(e) => (0, e.to_string()),
+            Err(e) => {
+                crate::applog::warn(format!(
+                    "Sending a piece of {name} failed (will retry): {e}"
+                ));
+                (0, e.to_string())
+            }
         };
         match status {
             200 | 409 => {
@@ -178,6 +214,23 @@ pub fn download(
     if dest.exists() {
         return Ok(());
     }
+    let result = download_inner(from, id, dest, progress, cancel);
+    if let Err(e) = &result {
+        crate::applog::warn(format!(
+            "Downloading file {id} from {} failed: {e}",
+            from.base
+        ));
+    }
+    result
+}
+
+fn download_inner(
+    from: &Endpoint,
+    id: &str,
+    dest: &Path,
+    progress: &dyn Fn(u64, u64),
+    cancel: &AtomicBool,
+) -> Result<(), String> {
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("Couldn't save the file ({e})."))?;
     }
@@ -264,6 +317,9 @@ pub fn download(
             }
             Ok(false) | Err((true, _)) if failures < 5 => {
                 failures += 1;
+                crate::applog::warn(format!(
+                    "Download of {id} interrupted; trying again ({failures})"
+                ));
                 std::thread::sleep(Duration::from_millis(700 * failures));
             }
             Ok(false) => return Err("The download didn't finish. Try again.".into()),

@@ -518,6 +518,7 @@ fn report(st: &mut State, id: u32, kind: &str, message: &str) {
         "audioQuality" => warn!("client", "{name}: {message}"),
         "error" => error!("client", "App error on {name}'s computer: {message}"),
         "info" => info!("client", "{name}: {message}"),
+        "files" => warn!("client", "{name} had a problem with a file: {message}"),
         _ => debug!(
             "client",
             "Unknown report \"{}\" from {name}: {message}",
