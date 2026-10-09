@@ -38,6 +38,12 @@ pub struct Settings {
     pub check_updates: bool,
     /// Color theme id (see theme.rs).
     pub theme: String,
+    /// The member list on the right is open.
+    pub show_members: bool,
+    /// Volume for videos and audio played in the chat (0.0 to 1.0).
+    pub media_volume: f32,
+    /// Emoji picked recently, newest first.
+    pub recent_emoji: Vec<String>,
 }
 
 impl Default for Settings {
@@ -63,6 +69,9 @@ impl Default for Settings {
             last_text_channel: None,
             check_updates: true,
             theme: "plum".into(),
+            show_members: true,
+            media_volume: 0.8,
+            recent_emoji: Vec::new(),
         }
     }
 }

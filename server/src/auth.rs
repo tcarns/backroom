@@ -6,8 +6,8 @@
 
 use crate::accounts::{self, Store};
 use crate::{config, leave_voice, now_ms, Shared, State};
-use proto::{Account, AccountSummary, AdminAction, Auth, ServerMsg, FEATURE_ACCOUNTS};
-use proto::{FEATURE_ATTACHMENTS, PROTOCOL_VERSION};
+use proto::{Account, AccountSummary, AdminAction, Auth, Member, ServerMsg, FEATURE_ACCOUNTS};
+use proto::{FEATURE_ATTACHMENTS, FEATURE_FILES, PROTOCOL_VERSION};
 use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -41,6 +41,30 @@ impl State {
             .collect();
         list.sort_by_key(|a| a.name.to_lowercase());
         list
+    }
+
+    /// Everyone with an account (not banned), for the member list.
+    pub fn members(&self) -> Vec<Member> {
+        let mut list: Vec<Member> = self
+            .accounts
+            .all()
+            .iter()
+            .filter(|a| !a.banned)
+            .map(|a| Member {
+                account: a.id,
+                name: a.name.clone(),
+                admin: a.admin,
+            })
+            .collect();
+        list.sort_by_key(|m| m.name.to_lowercase());
+        list
+    }
+
+    /// The member list changed: tell everyone signed in.
+    pub fn broadcast_members(&self) {
+        self.broadcast(&ServerMsg::Members {
+            list: self.members(),
+        });
     }
 
     /// Admins see everyone's accounts; refresh their list after any change.
@@ -167,6 +191,7 @@ impl State {
         };
         let must_change = a.must_change_password;
         self.accounts.dirty = true;
+        let file_key = crate::random_id() + &crate::random_id();
         {
             let c = self.clients.get_mut(&conn).unwrap();
             c.authed = true;
@@ -175,7 +200,9 @@ impl State {
             c.admin = me.admin;
             c.token_hash = token_hash;
             c.signed_in_at = Instant::now();
+            c.file_key = Some(file_key.clone());
         }
+        self.files.keys.insert(file_key.clone(), conn);
         info!(
             "conn",
             "{} signed in from {ip}{how} ({} online)",
@@ -195,11 +222,14 @@ impl State {
             features: vec![
                 FEATURE_ATTACHMENTS.to_string(),
                 FEATURE_ACCOUNTS.to_string(),
+                FEATURE_FILES.to_string(),
             ],
             max_attachment_bytes: self.cfg.max_attachment_bytes,
             account: Some(me),
             token,
             must_change_password: must_change,
+            file_key: Some(file_key),
+            members: self.members(),
         };
         self.send(conn, &welcome);
         self.broadcast_presence();
@@ -240,6 +270,8 @@ impl State {
             account: None,
             token: None,
             must_change_password: false,
+            file_key: None,
+            members: Vec::new(),
         };
         self.send(conn, &welcome);
         self.send(conn, &update_required());
@@ -468,6 +500,7 @@ async fn register(
     let (token, token_hash) = st.accounts.issue_token(id, now).unwrap();
     st.save_accounts();
     info!("auth", "{name} created an account (from {ip})");
+    st.broadcast_members();
     if st.accounts.admin_count() == 0 && st.accounts.all().len() == 1 {
         warn!(
             "auth",
@@ -691,6 +724,7 @@ pub fn rename(st: &mut State, conn: u32, name: &str) {
     }
     st.broadcast_presence();
     st.broadcast_voice();
+    st.broadcast_members();
     st.send_accounts_to_admins();
 }
 
@@ -863,6 +897,7 @@ pub fn act(
         }
     };
     st.send_accounts_to_admins();
+    st.broadcast_members();
     Ok(result)
 }
 

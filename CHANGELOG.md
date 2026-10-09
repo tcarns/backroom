@@ -2,6 +2,14 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.7.0
+
+- Member list on the right, like Discord: who's online (and in which voice channel), then everyone else. The people button at the top of the chat hides it.
+- Deafened people now show the muted mark too.
+- Send any file, up to 100 MB: videos and audio play right in the chat, GIFs animate, and other files have Open and Save buttons. Files travel separately from voice, so big ones never make voices stutter.
+- Color emoji (Twemoji, the set Discord uses), shown big when a message is only emoji. The picker has every emoji, with categories, search and recently used, and `:codes:` work for all of them.
+- The server keeps up to 5 GB of files and clears the oldest when it's full (`max_storage_mb`).
+
 ## 0.6.0
 
 - Accounts: everyone signs in with their own name and password, and nobody else can use their name. The group password is now only needed once, to create an account. If you used Backroom before, the app fills in your name and the group password; just pick a password.

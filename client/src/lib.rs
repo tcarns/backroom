@@ -3,9 +3,12 @@
 
 pub mod audio;
 pub mod emoji;
+pub mod files;
 pub mod images;
 pub mod keys;
+pub mod media;
 pub mod net;
 pub mod settings;
+pub mod twemoji;
 pub mod updater;
 pub mod voice;

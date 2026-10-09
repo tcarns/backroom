@@ -23,8 +23,10 @@ pub struct Config {
     pub auto_update: bool,
     /// New accounts can be created (with the group password).
     pub allow_signup: bool,
-    /// Largest image someone can send.
+    /// Largest file someone can send.
     pub max_attachment_bytes: u64,
+    /// Most space all sent files may use together.
+    pub max_storage_bytes: u64,
     pub config_path: PathBuf,
     /// Notes to log once logging is running (first-run messages, bad values).
     pub notes: Vec<(Level, String)>,
@@ -48,6 +50,7 @@ struct FileConfig {
     auto_update: Option<bool>,
     allow_signup: Option<bool>,
     max_attachment_mb: Option<u64>,
+    max_storage_mb: Option<u64>,
 }
 
 fn base_dir() -> PathBuf {
@@ -89,9 +92,13 @@ max_per_voice_channel = 8
 # Chat messages kept per text channel.
 history_limit = 300
 
-# Largest image people can send, in megabytes. Images are kept in data/attachments
+# Largest file people can send, in megabytes. Files are kept in data/attachments
 # and deleted when their message ages out of history.
-max_attachment_mb = 8
+max_attachment_mb = 100
+
+# Most space all sent files may use together, in megabytes. When it's full, the
+# oldest files are deleted to make room (their messages stay, marked "expired").
+max_storage_mb = 5120
 
 # How much to log: trace, debug, info, warn, error, critical.
 # You can also change it while the server runs by typing: level debug
@@ -109,6 +116,40 @@ auto_update = true
 "#
     )
 }
+
+/// Settings files written by 0.6.0 and earlier say images are limited to 8 MB.
+/// If that part is untouched, switch it to the new defaults (100 MB per file, any
+/// file type, 5 GB in all). A limit someone chose themselves is left alone.
+fn upgrade_file(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let crlf = text.contains("\r\n");
+    let unix = text.replace("\r\n", "\n");
+    if !unix.contains(OLD_ATTACHMENT_BLOCK) || unix.contains("max_storage_mb") {
+        return None;
+    }
+    let mut new = unix.replace(OLD_ATTACHMENT_BLOCK, NEW_ATTACHMENT_BLOCK);
+    if crlf {
+        new = new.replace('\n', "\r\n");
+    }
+    std::fs::write(path, new).ok()?;
+    Some(format!(
+        "Updated {}: people can now send any file up to 100 MB (it was images up to 8 MB), with 5 GB for files in all. Change max_attachment_mb and max_storage_mb there if you like.",
+        path.display()
+    ))
+}
+
+const OLD_ATTACHMENT_BLOCK: &str = r#"# Largest image people can send, in megabytes. Images are kept in data/attachments
+# and deleted when their message ages out of history.
+max_attachment_mb = 8
+"#;
+const NEW_ATTACHMENT_BLOCK: &str = r#"# Largest file people can send, in megabytes. Files are kept in data/attachments
+# and deleted when their message ages out of history.
+max_attachment_mb = 100
+
+# Most space all sent files may use together, in megabytes. When it's full, the
+# oldest files are deleted to make room (their messages stay, marked "expired").
+max_storage_mb = 5120
+"#;
 
 fn clean_channel(c: &str) -> String {
     c.trim()
@@ -144,6 +185,9 @@ pub fn load() -> Config {
         .unwrap_or_else(|| base.join("backroom-server.toml"));
 
     let mut file = FileConfig::default();
+    if let Some(note) = upgrade_file(&config_path) {
+        notes.push((Level::Info, note));
+    }
     if config_path.exists() {
         match std::fs::read_to_string(&config_path)
             .map_err(|e| e.to_string())
@@ -285,11 +329,17 @@ pub fn load() -> Config {
     let max_attachment_mb = parse_num("MAX_ATTACHMENT_MB", env("MAX_ATTACHMENT_MB"), &mut notes)
         .map(|n| n as u64)
         .or(file.max_attachment_mb)
-        .unwrap_or(8)
-        .clamp(1, 50);
+        .unwrap_or(100)
+        .clamp(1, 2048);
+    let max_storage_mb = parse_num("MAX_STORAGE_MB", env("MAX_STORAGE_MB"), &mut notes)
+        .map(|n| n as u64)
+        .or(file.max_storage_mb)
+        .unwrap_or(5120)
+        .max(max_attachment_mb);
 
     Config {
         max_attachment_bytes: max_attachment_mb * 1024 * 1024,
+        max_storage_bytes: max_storage_mb * 1024 * 1024,
         check_updates,
         auto_update,
         allow_signup,
@@ -306,5 +356,44 @@ pub fn load() -> Config {
         log_file,
         config_path,
         notes,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_untouched_old_settings_only() {
+        let dir = std::env::temp_dir().join(format!("br-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("backroom-server.toml");
+        let new = default_file("pw");
+        let old = new.replace(NEW_ATTACHMENT_BLOCK, OLD_ATTACHMENT_BLOCK);
+        assert_ne!(old, new);
+
+        // A file written by 0.6 (Windows line endings too) gets the new defaults.
+        for text in [old.clone(), old.replace('\n', "\r\n")] {
+            std::fs::write(&path, &text).unwrap();
+            assert!(upgrade_file(&path).is_some());
+            let got = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("\r\n", "\n");
+            assert_eq!(got, new);
+            let parsed: FileConfig = toml::from_str(&got).unwrap();
+            assert_eq!(
+                (parsed.max_attachment_mb, parsed.max_storage_mb),
+                (Some(100), Some(5120))
+            );
+            // Only once.
+            assert!(upgrade_file(&path).is_none());
+        }
+
+        // A limit someone chose is left alone.
+        let custom = old.replace("max_attachment_mb = 8", "max_attachment_mb = 20");
+        std::fs::write(&path, &custom).unwrap();
+        assert!(upgrade_file(&path).is_none());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), custom);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

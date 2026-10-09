@@ -35,6 +35,23 @@ dirs = "6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 arboard = "3.6"
 sha2 = "0.10"
+# File transfers over HTTP (the same client the updater uses).
+ureq = { version = "3", default-features = false, features = ["native-tls"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation", "Win32_UI_Controls_Dialogs", "Win32_System_Com"] }
+# Playing videos and audio with Windows' own Media Foundation (no codecs bundled).
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_Graphics_Imaging",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+] }
+# Needed by windows' #[implement] macro (the media engine calls us back).
+windows-core = "0.61"

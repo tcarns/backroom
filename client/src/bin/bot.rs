@@ -58,6 +58,8 @@ fn main() {
     let mute_after: Option<f32> = arg(&args, "--mute-after").and_then(|s| s.parse().ok());
     let deafen = args.iter().any(|a| a == "--deafen");
     let send_image = arg(&args, "--send-image");
+    // Any file, over HTTP (servers from 0.7), with the app's own upload code.
+    let send_file = arg(&args, "--send-file");
     let caption = arg(&args, "--caption").unwrap_or_default();
     let say: Vec<String> = arg(&args, "--say")
         .map(|s| s.split('|').map(str::to_string).collect())
@@ -86,13 +88,18 @@ fn main() {
     let mut tried_login = legacy;
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut my_id = 0;
+    let mut endpoint: Option<backroom::files::Endpoint> = None;
     let mut joined = false;
     let mut errors: Vec<String> = Vec::new();
     while !joined && Instant::now() < deadline {
         while let Some(ev) = net.try_recv() {
             match ev {
-                NetEvent::Server(ServerMsg::Welcome { id, .. }) => {
+                NetEvent::Server(ServerMsg::Welcome { id, file_key, .. }) => {
                     my_id = id;
+                    endpoint = file_key.map(|key| backroom::files::Endpoint {
+                        base: proto::files::http_base(&server),
+                        key,
+                    });
                     net.send(ClientMsg::JoinVoice {
                         channel: channel.clone(),
                         muted: false,
@@ -158,6 +165,44 @@ fn main() {
             Err(e) => errors.push(e),
         }
     }
+    let mut file_sent: Option<serde_json::Value> = None;
+    if let Some(path) = &send_file {
+        let path = std::path::PathBuf::from(path);
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        match &endpoint {
+            None => errors.push("this server doesn't take files over HTTP".into()),
+            Some(to) => {
+                let started = Instant::now();
+                let never = std::sync::atomic::AtomicBool::new(false);
+                let updates = std::cell::Cell::new(0u32);
+                let src = backroom::files::Source::Path(path.clone());
+                match backroom::files::upload(
+                    to,
+                    &name,
+                    &src,
+                    &|_| updates.set(updates.get() + 1),
+                    &never,
+                ) {
+                    Ok(upload) => {
+                        net.send(ClientMsg::Post {
+                            channel: "general".into(),
+                            text: caption.clone(),
+                            files: vec![proto::PostFile {
+                                upload,
+                                ..Default::default()
+                            }],
+                        });
+                        file_sent = Some(serde_json::json!({
+                            "name": name, "bytes": std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                            "seconds": started.elapsed().as_secs_f32(), "progressUpdates": updates.get(),
+                        }));
+                    }
+                    Err(e) => errors.push(e),
+                }
+            }
+        }
+    }
+    let mut files_seen: Vec<serde_json::Value> = Vec::new();
     // Images others post while we're here: fetch each one and check the size matches.
     let mut images_seen: Vec<serde_json::Value> = Vec::new();
     let mut expected: std::collections::HashMap<String, (String, u64)> =
@@ -218,7 +263,31 @@ fn main() {
                 NetEvent::Server(ServerMsg::Chat { message }) => {
                     for a in &message.attachments {
                         expected.insert(a.id.clone(), (a.name.clone(), a.size));
-                        net.send(ClientMsg::GetAttachment { id: a.id.clone() });
+                        match &endpoint {
+                            // Servers from 0.7: download over HTTP with the app's code.
+                            Some(from) => {
+                                let dest = std::env::temp_dir().join(format!(
+                                    "bot-{}-{}",
+                                    std::process::id(),
+                                    a.id
+                                ));
+                                let never = std::sync::atomic::AtomicBool::new(false);
+                                let r = backroom::files::download(
+                                    from,
+                                    &a.id,
+                                    &dest,
+                                    &|_, _| {},
+                                    &never,
+                                );
+                                let bytes = std::fs::read(&dest).unwrap_or_default();
+                                let _ = std::fs::remove_file(&dest);
+                                files_seen.push(serde_json::json!({
+                                    "name": a.name, "mime": a.mime, "bytes": bytes.len(),
+                                    "sizeMatches": bytes.len() as u64 == a.size, "error": r.err(),
+                                }));
+                            }
+                            None => net.send(ClientMsg::GetAttachment { id: a.id.clone() }),
+                        }
                     }
                 }
                 NetEvent::Attachment { id, bytes } => {
@@ -264,6 +333,7 @@ fn main() {
             "heardSecondHalfDb": levels, "heardFirstHalfDb": first_half,
             "speakingSeen": speaking_seen, "pingsMs": pings,
             "imageSent": image_sent.map(|(n, b)| serde_json::json!({ "name": n, "bytes": b })), "imagesReceived": images_seen, "errors": errors,
+            "fileSent": file_sent, "filesReceived": files_seen,
         })
     );
     net.disconnect();

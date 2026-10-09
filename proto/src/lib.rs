@@ -1,12 +1,16 @@
 //! Wire protocol shared by the Backroom server and client.
 //!
-//! Everything travels over one WebSocket connection:
-//! - Control messages are JSON text frames (`ClientMsg` / `ServerMsg`).
-//! - Voice is binary frames carrying one 20 ms Opus packet each.
-//! - Image uploads and downloads are binary frames too (kinds 3 and 4).
+//! One WebSocket connection carries:
+//! - Control messages as JSON text frames (`ClientMsg` / `ServerMsg`).
+//! - Voice as binary frames carrying one 20 ms Opus packet each.
+//! - Image uploads and downloads for apps before 0.7 (binary kinds 3 and 4).
+//!
+//! From 0.7, files go over plain HTTP on the same port instead (see [`files`]).
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+pub mod files;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -81,9 +85,35 @@ pub enum ClientMsg {
         message: String,
     },
     /// Ask for an attachment's bytes; the server answers with an ATTACH_DATA frame.
+    /// (Apps before 0.7; newer ones download over HTTP.)
     GetAttachment {
         id: String,
     },
+    /// Post a message with files uploaded over HTTP (see [`files`]).
+    Post {
+        channel: String,
+        #[serde(default)]
+        text: String,
+        files: Vec<PostFile>,
+    },
+}
+
+/// A finished upload to attach to a message, with what the sender's app
+/// worked out about it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PostFile {
+    pub upload: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    /// Videos and audio.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Videos: an uploaded JPEG of one frame, shown before it plays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster: Option<String>,
 }
 
 /// How a `Hello` signs in.
@@ -170,10 +200,42 @@ pub struct ChatMessage {
 pub struct Attachment {
     pub id: String,
     pub name: String,
+    /// What the server found the file to be (never taken from the sender).
     pub mime: String,
     pub size: u64,
     pub width: u32,
     pub height: u32,
+    /// Videos and audio.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poster: Option<Poster>,
+    /// Deleted to make room (the server's storage limit).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub expired: bool,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+/// A video's preview frame (a JPEG attachment of its own).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Poster {
+    pub id: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Someone with an account, online or not (for the member list).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Member {
+    pub account: u32,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admin: bool,
 }
 
 /// Sent ahead of the image bytes in an upload frame.
@@ -249,6 +311,12 @@ pub enum ServerMsg {
         /// Signed in with a temporary password: ask for a new one.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         must_change_password: bool,
+        /// For file transfers over HTTP (servers with the "files" feature).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_key: Option<String>,
+        /// Everyone with an account, for the member list.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        members: Vec<Member>,
     },
     Error {
         code: String,
@@ -300,6 +368,10 @@ pub enum ServerMsg {
     Notice {
         text: String,
     },
+    /// The member list changed (someone joined, was renamed, removed…).
+    Members {
+        list: Vec<Member>,
+    },
 }
 
 /// The server has accounts.
@@ -323,6 +395,8 @@ pub const FATAL_ERRORS: &[&str] = &[
 ];
 
 pub const FEATURE_ATTACHMENTS: &str = "attachments";
+/// Any file, over HTTP (see [`files`]).
+pub const FEATURE_FILES: &str = "files";
 
 // ---------------------------------------------------------------- voice frames
 

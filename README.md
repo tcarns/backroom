@@ -37,14 +37,22 @@ Headphones are recommended. There's no echo cancellation yet, so speakers can fe
 
 - **Join voice:** click a voice channel. Leave with the red phone button.
 - **Mute and deafen:** the mic and headphone buttons at the bottom left.
-- **Someone too loud or too quiet:** click their name in the voice channel to set their volume (up to 200%) or mute them just for you. This is remembered.
-- **Emoji:** type shortcuts like `:)` `:D` `;)` `<3` `:P`, or codes like `:fire:` `:joy:` `:thumbsup:` `:skull:` `:100:`. They turn into emoji when you send. The ☺ button in the message box opens a picker. Emoji are drawn in black and white: the app's text engine can't draw color emoji.
-- **Images:** three ways to attach one:
+- **Someone too loud or too quiet:** click their name (in a voice channel or the member list) to set their volume (up to 200%) or mute them just for you. This is remembered.
+- **Member list:** everyone with an account, on the right, like Discord. Online people come first, with the voice channel they're in and their mute and deafen marks; offline people are faded. The crown marks admins. The people button at the top right of the chat hides or shows it (it also hides itself when the window is narrow).
+- **Emoji:** color emoji (Twemoji, the same set Discord uses). A message that's only emoji (up to 27) shows them big. Type shortcuts like `:)` `:D` `;)` `<3` `:P`, or any emoji's code like `:fire:` `:joy:` `:thumbsup:` `:octopus:`. They turn into emoji when you send. The ☺ button opens a picker with every emoji, by category, with search and your recently used ones; pointing at one shows its code. (While typing, emoji in the message box are still black and white.)
+- **Files:** three ways to attach one:
   - click **+** in the message box
-  - drag an image onto the window
-  - paste one with Ctrl+V (a screenshot from Win+Shift+S works too)
+  - drag files onto the window
+  - paste an image with Ctrl+V (a screenshot from Win+Shift+S works too)
 
-  You can attach up to 4 at once and add a caption. Big photos are shrunk to 2048 pixels before sending, so they upload quickly. Click an image in the chat to see it full size; **Open in photo viewer** opens it in your usual app.
+  You can attach up to 10 at once and add a caption. Any kind of file works, up to 100 MB each (the server can change that). How they show up:
+  - **Images** appear in the chat. Big photos are shrunk to 2048 pixels before sending. Click one to see it full size.
+  - **GIFs** play in the chat.
+  - **Videos** (MP4, MOV, WebM, MKV and more) show a preview frame and their length. Click to play right in the chat; pause, skip by clicking the bar, and change the volume with the speaker button (click to mute, scroll to adjust). The ↗ button opens it in your usual video player. If a video can't play inside Backroom, it says so and offers your player instead.
+  - **Audio** (MP3, WAV, OGG, FLAC, M4A…) gets a player with a seek bar.
+  - **Anything else** shows its name and size, with **Open** and **Save**. Opening a program or script (.exe, .bat, .ps1…) asks first, and Windows shows its usual warning, the same as for a download from a browser.
+
+  Right-click an image, video or audio file for **Save as…**. Videos and audio play with Windows' own decoders (the ones Films & TV and Media Player use), on the graphics card when there is one. WebM needs Microsoft's VP9 extension, which most Windows 10 and 11 PCs already have. Files you open or play are kept in `%LOCALAPPDATA%\Backroom\cache` (up to 2 GB, oldest removed first).
 - **Settings** (the sliders button):
   - **Mic and speakers:** pick devices and use the mic meter to test your microphone.
   - **When to send your voice:**
@@ -91,7 +99,8 @@ Edit `backroom-server.toml` next to the server, then restart it:
 | `voice_channels` | `["Lounge", "Gaming", "Quiet room"]` | Voice channels |
 | `max_per_voice_channel` | `8` | Most people in one voice channel |
 | `history_limit` | `300` | Messages kept per text channel |
-| `max_attachment_mb` | `8` | Largest image people can send |
+| `max_attachment_mb` | `100` | Largest file people can send, in MB |
+| `max_storage_mb` | `5120` | Most space all sent files may use together. When it's full, the oldest files are deleted (their messages stay, marked as cleared). |
 | `log_level` | `info` | How much to log |
 | `log_file` | `data/backroom.log` | Log file. `""` logs to the window only. |
 | `check_updates` | `true` | Check GitHub for a new version every 6 hours |
@@ -99,9 +108,11 @@ Edit `backroom-server.toml` next to the server, then restart it:
 
 Environment variables with the same names in capitals (`PASSWORD`, `PORT`, `LOG_LEVEL` and so on) override the file. These are the same names the old Node version used.
 
-Images are saved in `data\attachments`. They're deleted automatically when their message ages out of the chat history.
+Files are saved in `data\attachments`. They're deleted automatically when their message ages out of the chat history, or when the oldest have to make room under `max_storage_mb`. If your settings file came from 0.6.0 or earlier and still had the old 8 MB image limit, 0.7.0 switches it to the new defaults (100 MB, 5 GB) once; a limit you'd changed is left alone.
 
-**Mixing versions:** a server with accounts (0.6.0 and later) needs apps from 0.6.0 on. Older apps are told to close, reopen and click **Update now**. Apps from 0.6.0 still work with older servers, signing in with the group password. Between 0.2.0 and 0.5.0, any app works with any server. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out), and a 0.2.0 app on a 0.3.0 server shows messages without their images.
+Files travel over plain HTTP on the server's port, separately from voice, so a big upload or download never makes anyone's voice stutter. The Cloudflare tunnel carries both, with nothing to set up.
+
+**Mixing versions:** with a 0.7.0 server, 0.6.0 apps still work but only show images (other files say they aren't available), and a 0.7.0 app on a 0.6.0 server can only send images. A server with accounts (0.6.0 and later) needs apps from 0.6.0 on. Older apps are told to close, reopen and click **Update now**. Apps from 0.6.0 still work with older servers, signing in with the group password. Between 0.2.0 and 0.5.0, any app works with any server. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out), and a 0.2.0 app on a 0.3.0 server shows messages without their images.
 
 **Keeping your old chat history:** the history format is the same as the browser version's. Copy the old `data\messages.json` into the `data` folder next to `backroom-server.exe` before starting it.
 
@@ -169,6 +180,14 @@ Server updating started with 0.5.0, so getting the server from 0.4.0 or earlier 
 3. Commit and push to `main`.
 
 GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. The release includes the zip, the two `.exe` files (what the app and server download when they update themselves) and `SHA256SUMS.txt`, the checksums the app verifies against. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
+
+## Credits
+
+- Color emoji: [Twemoji](https://github.com/jdecked/twemoji) by Twitter, Inc. and other contributors, licensed [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- Emoji names, groups and codes: [emojibase](https://emojibase.dev) (MIT).
+- Fallback emoji font: Symbola by George Douros (free for any use).
+
+Details are in `client/assets/NOTICE.md`.
 
 ## Building from source
 

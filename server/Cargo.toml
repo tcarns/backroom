@@ -12,7 +12,7 @@ path = "src/main.rs"
 proto = { workspace = true, features = ["updates"] }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "fs", "io-util"] }
 tokio-tungstenite.workspace = true
 futures-util.workspace = true
 chrono.workspace = true
@@ -22,6 +22,8 @@ toml = { version = "0.9", default-features = false, features = ["parse", "serde"
 # Account passwords are stored as Argon2id hashes; sign-in tokens as SHA-256.
 argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
 sha2 = "0.10"
+# Reading HTTP request heads (files go over plain HTTP; tungstenite uses it too).
+httparse = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_System_Console", "Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Security"] }

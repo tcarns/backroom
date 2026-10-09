@@ -4,6 +4,11 @@
 //! they stand on their own (surrounded by spaces), so links and times like
 //! `https://` or `10:30` are left alone.
 
+/// Font family whose characters are invisible and one em wide (an emoji's first character).
+pub const SPACE_FONT: &str = "emoji-space";
+/// Font family whose characters are invisible and take no room (the rest of an emoji).
+pub const ZERO_FONT: &str = "emoji-zero";
+
 /// Adds a fallback emoji font (a trimmed copy of Symbola, ~0.9 MB) after egui's
 /// built-in fonts, so newer emoji like 🤔 or 🙄 draw instead of showing a box.
 pub fn install_font(ctx: &eframe::egui::Context) {
@@ -19,6 +24,26 @@ pub fn install_font(ctx: &eframe::egui::Context) {
         if let Some(list) = fonts.families.get_mut(&family) {
             list.push("emoji-symbola".into());
         }
+    }
+    // Invisible fonts that leave room for color emoji in messages (see
+    // tools/gen_emoji_space_fonts.py and chat_text.rs).
+    for (name, bytes) in [
+        (
+            SPACE_FONT,
+            include_bytes!("../assets/emoji-space.ttf").as_slice(),
+        ),
+        (
+            ZERO_FONT,
+            include_bytes!("../assets/emoji-zero.ttf").as_slice(),
+        ),
+    ] {
+        fonts.font_data.insert(
+            name.into(),
+            std::sync::Arc::new(FontData::from_static(bytes)),
+        );
+        fonts
+            .families
+            .insert(FontFamily::Name(name.into()), vec![name.into()]);
     }
     ctx.set_fonts(fonts);
 }
@@ -136,11 +161,111 @@ pub const SHORTCODES: &[(&str, &str)] = &[
     ("gg", "🏆"),
 ];
 
+/// The emoji emoticons turn into.
+pub fn emoticon_emoji() -> impl Iterator<Item = &'static str> {
+    EMOTICONS.iter().map(|(_, e)| *e)
+}
+
 /// How many of the shortcodes the picker shows.
 pub const PICKER_COUNT: usize = 56;
 
 pub fn picker() -> &'static [(&'static str, &'static str)] {
     &SHORTCODES[..PICKER_COUNT]
+}
+
+// ---------------------------------------------------------------- every emoji
+
+/// One emoji in the picker (from emojibase, see tools/gen_emoji_list.py).
+pub struct Entry {
+    pub group: u8,
+    pub emoji: &'static str,
+    pub name: &'static str,
+    /// Shortcodes, like "thumbsup" (GitHub/Slack style).
+    pub codes: Vec<&'static str>,
+    /// Extra words to search by.
+    pub words: &'static str,
+}
+
+/// The picker's groups, in order, with their tab names.
+pub const GROUPS: [(u8, &str); 9] = [
+    (0, "Smileys & emotion"),
+    (1, "People & body"),
+    (3, "Animals & nature"),
+    (4, "Food & drink"),
+    (5, "Travel & places"),
+    (6, "Activities"),
+    (7, "Objects"),
+    (8, "Symbols"),
+    (9, "Flags"),
+];
+
+static LIST: &str = include_str!("../assets/emoji-list.tsv");
+
+/// Every emoji, in Unicode's order.
+pub fn all() -> &'static [Entry] {
+    static ALL: std::sync::OnceLock<Vec<Entry>> = std::sync::OnceLock::new();
+    ALL.get_or_init(|| {
+        LIST.lines()
+            .filter_map(|line| {
+                let mut f = line.split('\t');
+                Some(Entry {
+                    group: f.next()?.parse().ok()?,
+                    emoji: f.next()?,
+                    name: f.next()?,
+                    codes: f.next().unwrap_or("").split_whitespace().collect(),
+                    words: f.next().unwrap_or(""),
+                })
+            })
+            .collect()
+    })
+}
+
+/// Emoji whose name, shortcode or tags match what was typed (best matches first).
+pub fn search(query: &str) -> Vec<&'static Entry> {
+    let q = query.trim().trim_matches(':').to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut hits: Vec<(u8, usize, &Entry)> = all()
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            let rank = if e.codes.iter().any(|c| *c == q) || e.name == q {
+                0
+            } else if e.codes.iter().any(|c| c.starts_with(&q)) || e.name.starts_with(&q) {
+                1
+            } else if e.name.split(' ').any(|w| w.starts_with(&q)) {
+                2
+            } else if e.words.split(' ').any(|w| w.starts_with(&q)) {
+                3
+            } else if e.name.contains(&q) {
+                4
+            } else {
+                return None;
+            };
+            Some((rank, i, e))
+        })
+        .collect();
+    hits.sort_by_key(|h| (h.0, h.1));
+    hits.into_iter().map(|h| h.2).collect()
+}
+
+/// The emoji for a shortcode like "octopus" (any emoji, not just the picker's).
+pub fn by_code(code: &str) -> Option<&'static str> {
+    let code = code.to_ascii_lowercase();
+    all()
+        .iter()
+        .find(|e| e.codes.iter().any(|c| *c == code))
+        .map(|e| e.emoji)
+}
+
+/// The main shortcode for an emoji, for hints (":thumbsup:").
+pub fn code_for(emoji: &str) -> Option<&'static str> {
+    let bare = emoji.trim_end_matches('\u{FE0F}');
+    all()
+        .iter()
+        .find(|e| e.emoji.trim_end_matches('\u{FE0F}') == bare)
+        .and_then(|e| e.codes.first().copied())
 }
 
 /// Convert emoticons and shortcodes in a message.
@@ -197,10 +322,12 @@ fn replace_shortcodes(word: &str) -> String {
                     && name
                         .chars()
                         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '+' || c == '-');
-                if let Some((_, e)) = SHORTCODES
+                let found = SHORTCODES
                     .iter()
                     .find(|(k, _)| valid && k.eq_ignore_ascii_case(name))
-                {
+                    .map(|(_, e)| *e)
+                    .or_else(|| if valid { by_code(name) } else { None });
+                if let Some(e) = found {
                     out.push_str(&rest[..start]);
                     out.push_str(e);
                     rest = &after[end + 1..];
@@ -259,6 +386,32 @@ mod tests {
         assert!(
             missing.is_empty(),
             "the built-in font has no glyph for: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn every_emoji() {
+        assert!(all().len() > 1800);
+        assert_eq!(convert(":octopus: :taco:"), "🐙 🌮");
+        assert_eq!(convert(":Thumbsup:"), "👍");
+        assert_eq!(search("thumbs")[0].emoji.trim_end_matches('\u{FE0F}'), "👍");
+        assert_eq!(search(":joy:")[0].emoji, "😂");
+        assert!(search("pizza").iter().any(|e| e.emoji == "🍕"));
+        assert!(search("zzzzzz").is_empty());
+        assert_eq!(code_for("🔥"), Some("fire"));
+        // Every group has emoji, and every emoji has a color picture.
+        for (g, _) in GROUPS {
+            assert!(all().iter().any(|e| e.group == g), "group {g}");
+        }
+        let missing: Vec<&str> = all()
+            .iter()
+            .filter(|e| crate::twemoji::name_for(e.emoji).is_none())
+            .map(|e| e.emoji)
+            .collect();
+        assert!(
+            missing.len() < 5,
+            "{} without pictures: {missing:?}",
+            missing.len()
         );
     }
 

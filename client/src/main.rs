@@ -3,6 +3,9 @@
 
 mod accounts;
 mod attach;
+mod attach_ui;
+mod chat_text;
+mod members;
 mod theme;
 
 use attach::{Attachments, ImgState};
@@ -20,9 +23,10 @@ use eframe::egui::{
 use parking_lot::Mutex;
 use proto::update::{self as updates, Release};
 use proto::{
-    Attachment, ChatMessage, ClientMsg, ServerMsg, UploadHeader, User, VoiceChannelState,
-    FEATURE_ATTACHMENTS,
+    Attachment, ChatMessage, ClientMsg, Member, ServerMsg, User, VoiceChannelState,
+    FEATURE_ATTACHMENTS, FEATURE_FILES,
 };
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -31,7 +35,63 @@ use theme::pal;
 
 // ---------------------------------------------------------------- palette
 
+/// `backroom --check-media <file> <report.txt>`: read a video or audio file's
+/// details and play it for a few seconds without a window, writing what
+/// happened to the report. For checking playback problems on a PC.
+fn check_media(file: &std::path::Path, report: &std::path::Path) {
+    let mut out = String::new();
+    match backroom::media::probe(file) {
+        Ok(p) => out.push_str(&format!(
+            "probe: {}x{}, {} ms, poster: {}\n",
+            p.width,
+            p.height,
+            p.duration_ms,
+            p.poster.as_ref().map_or("none".to_string(), |i| format!(
+                "{}x{}",
+                i.width(),
+                i.height()
+            ))
+        )),
+        Err(e) => out.push_str(&format!("probe failed: {e}\n")),
+    }
+    let frames = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let wake: Wake = Arc::new(|| {});
+    match backroom::media::Player::open(file, [320, 180], 0.0, wake) {
+        Ok(player) => {
+            let start = Instant::now();
+            let mut last = None;
+            while start.elapsed() < Duration::from_secs(4) {
+                if player.take_frame().is_some() {
+                    frames.fetch_add(1, Ordering::Relaxed);
+                }
+                let st = player.status();
+                if st.error.is_some() {
+                    last = Some(st);
+                    break;
+                }
+                last = Some(st);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            out.push_str(&format!(
+                "play: frames {} status {:?}\n",
+                frames.load(Ordering::Relaxed),
+                last
+            ));
+        }
+        Err(e) => out.push_str(&format!("play failed: {e}\n")),
+    }
+    let _ = std::fs::write(report, out);
+}
+
 fn main() -> eframe::Result {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 4 && args[1] == "--check-media" {
+        check_media(
+            std::path::Path::new(&args[2]),
+            std::path::Path::new(&args[3]),
+        );
+        return Ok(());
+    }
     // Handed over by the previous copy when it restarts us after an update.
     let resume = updater::take_resume();
     let just_updated = std::env::args().any(|a| a == "--updated");
@@ -94,6 +154,8 @@ struct Session {
     history: BTreeMap<String, Vec<ChatMessage>>,
     voice_state: Vec<VoiceChannelState>,
     users: Vec<User>,
+    /// Everyone with an account (servers with accounts), for the member list.
+    members: Vec<Member>,
 }
 
 impl Session {
@@ -215,7 +277,19 @@ struct App {
     emoji_anchor: egui::Rect,
     emoji_opened_frame: u64,
     acct: accounts::AccountUi,
+    /// Color emoji pictures (borrowed while drawing messages).
+    emoji: RefCell<chat_text::EmojiCache>,
+    /// The video or audio playing in the chat.
+    player: Option<attach_ui::Playing>,
+    /// "Open this program?" waiting for an answer.
+    confirm_open: Option<Attachment>,
+    /// Emoji picker: the tab shown (a group, or RECENT) and what's typed in its search.
+    emoji_tab: u8,
+    emoji_search: String,
 }
+
+/// The emoji picker's "recently used" tab.
+const RECENT: u8 = 255;
 
 impl App {
     fn new(
@@ -278,7 +352,13 @@ impl App {
             emoji_anchor: egui::Rect::NOTHING,
             emoji_opened_frame: 0,
             acct: accounts::AccountUi::default(),
+            emoji: RefCell::new(chat_text::EmojiCache::default()),
+            player: None,
+            confirm_open: None,
+            emoji_tab: RECENT,
+            emoji_search: String::new(),
         };
+        std::thread::spawn(backroom::files::prune_cache);
         app.apply_voice_flags();
         if app.s.check_updates {
             app.update_auto_started = true;
@@ -561,11 +641,28 @@ impl App {
                 account,
                 token,
                 must_change_password,
+                file_key,
+                members,
             } => {
                 let first = self.session.is_none();
                 self.on_welcome(account, token, must_change_password);
                 self.server_restarting = None;
                 self.att.server_supports = features.iter().any(|f| f == FEATURE_ATTACHMENTS);
+                let endpoint = file_key
+                    .filter(|_| features.iter().any(|f| f == FEATURE_FILES))
+                    .map(|key| backroom::files::Endpoint {
+                        base: proto::files::http_base(
+                            &backroom::net::normalize_server(&self.s.server).unwrap_or_default(),
+                        ),
+                        key,
+                    });
+                if first
+                    || self.att.endpoint.as_ref().map(|e| &e.base)
+                        != endpoint.as_ref().map(|e| &e.base)
+                {
+                    self.att.reset_for_server();
+                }
+                self.att.endpoint = endpoint;
                 if max_attachment_bytes > 0 {
                     self.att.max_bytes = max_attachment_bytes;
                 }
@@ -587,6 +684,7 @@ impl App {
                     history,
                     voice_state,
                     users,
+                    members,
                 });
                 self.conn = Conn::Online;
                 self.login_error = None;
@@ -683,7 +781,33 @@ impl App {
                 self.show_banner(message, true, Some(5));
             }
             ServerMsg::Pong { .. } => {}
-            ServerMsg::AttachmentGone { id } => self.att.gone(&id),
+            ServerMsg::AttachmentGone { id } => {
+                // Cleared by the server (storage limit, or aged out): show it as expired.
+                if let Some(sess) = self.session.as_mut() {
+                    for a in sess
+                        .history
+                        .values_mut()
+                        .flatten()
+                        .flat_map(|m| &mut m.attachments)
+                    {
+                        if a.id == id {
+                            a.expired = true;
+                        }
+                        if a.poster.as_ref().is_some_and(|p| p.id == id) {
+                            a.poster = None;
+                        }
+                    }
+                }
+                if self.player.as_ref().is_some_and(|p| p.id == id) {
+                    self.player = None;
+                }
+                self.att.gone(&id);
+            }
+            ServerMsg::Members { list } => {
+                if let Some(sess) = self.session.as_mut() {
+                    sess.members = list;
+                }
+            }
             ServerMsg::Restarting { version } => self.server_restarting = Some(version),
             m @ (ServerMsg::AccountUpdated { .. }
             | ServerMsg::Accounts { .. }
@@ -1026,47 +1150,6 @@ fn time_label(ts: u64) -> String {
 }
 
 /// Message text with clickable links.
-fn message_text(ui: &mut egui::Ui, text: &str) {
-    for line in text.split('\n') {
-        if !line.contains("http://") && !line.contains("https://") {
-            ui.add(egui::Label::new(RichText::new(line).color(pal().text)).wrap());
-            continue;
-        }
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            let mut rest = line;
-            while !rest.is_empty() {
-                let next = [rest.find("https://"), rest.find("http://")]
-                    .into_iter()
-                    .flatten()
-                    .min();
-                match next {
-                    Some(0) => {
-                        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-                        let mut url = &rest[..end];
-                        url = url.trim_end_matches(|c: char| ").,!?;:'\"]".contains(c));
-                        if url.len() <= 8 {
-                            ui.label(RichText::new(&rest[..end]).color(pal().text));
-                            rest = &rest[end..];
-                            continue;
-                        }
-                        ui.hyperlink_to(RichText::new(url).color(pal().accent), url);
-                        rest = &rest[url.len()..];
-                    }
-                    Some(i) => {
-                        ui.label(RichText::new(&rest[..i]).color(pal().text));
-                        rest = &rest[i..];
-                    }
-                    None => {
-                        ui.label(RichText::new(rest).color(pal().text));
-                        rest = "";
-                    }
-                }
-            }
-        });
-    }
-}
-
 // ---------------------------------------------------------------- screens
 
 impl App {
@@ -1081,7 +1164,9 @@ impl App {
             s
         };
         self.sidebar(ctx, &speaking);
+        self.member_panel(ctx, &speaking);
         self.chat(ctx);
+        self.confirm_open_dialog(ctx);
         self.volume_popup(ctx);
         self.emoji_picker(ctx);
         self.image_viewer(ctx);
@@ -1278,14 +1363,20 @@ impl App {
                         FontId::proportional(14.5),
                         color,
                     );
-                    // Status flags on the right.
-                    let mut x = rect.right() - 12.0;
-                    let mut flag_at = |glyph: &str| {
+                    // Status flags on the right: deafened shows muted too.
+                    let x = members::paint_voice_flags(
+                        p,
+                        egui::pos2(rect.right() - 12.0, rect.center().y),
+                        m.muted,
+                        m.deafened,
+                        12.0,
+                    );
+                    if locally_muted {
                         let c = egui::pos2(x, rect.center().y);
                         p.text(
                             c,
                             Align2::CENTER_CENTER,
-                            glyph,
+                            "🔊",
                             FontId::proportional(12.0),
                             pal().red,
                         );
@@ -1293,15 +1384,6 @@ impl App {
                             [c + egui::vec2(-6.0, -6.0), c + egui::vec2(6.0, 6.0)],
                             Stroke::new(1.5_f32, pal().red),
                         );
-                        x -= 18.0;
-                    };
-                    if m.deafened {
-                        flag_at("🎧");
-                    } else if m.muted {
-                        flag_at("🎤");
-                    }
-                    if locally_muted {
-                        flag_at("🔊");
                     }
                     if !is_me {
                         let resp = resp.on_hover_text(format!("Volume for {}", m.name));
@@ -1318,58 +1400,12 @@ impl App {
             }
         }
 
-        section_title(
-            ui,
-            &format!("Online ({})", {
-                let names: BTreeSet<&str> = sess.users.iter().map(|u| u.name.as_str()).collect();
-                names.len()
-            }),
-        );
-        let mut people: BTreeMap<&str, (Option<u32>, bool)> = BTreeMap::new();
-        for u in &sess.users {
-            let entry = people
-                .entry(u.name.as_str())
-                .or_insert((u.account, u.id == sess.me_id));
-            entry.1 |= u.id == sess.me_id;
-        }
-        for (name, (account, is_me)) in people {
-            let sense = if is_me {
-                Sense::hover()
-            } else {
-                Sense::click()
-            };
-            let (rect, resp) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), sense);
-            if !is_me {
-                if resp.hovered() {
-                    ui.painter()
-                        .rect_filled(rect, CornerRadius::same(6), pal().raised);
-                }
-                if resp.clicked() {
-                    open_pop = Some(VolumePop {
-                        name: name.to_string(),
-                        account,
-                        pos: rect.right_top() + egui::vec2(8.0, 0.0),
-                        opened_frame: ui.ctx().cumulative_frame_nr(),
-                    });
-                }
-            }
-            let p = ui.painter();
-            let c = rect.left_center() + egui::vec2(20.0, 0.0);
-            paint_avatar(p, c, 11.0, name, false, pal().bg_deep);
-            p.circle_filled(c + egui::vec2(8.0, 8.0), 5.0, pal().bg_deep);
-            p.circle_filled(c + egui::vec2(8.0, 8.0), 3.5, pal().teal);
-            p.text(
-                rect.left_center() + egui::vec2(40.0, 0.0),
-                Align2::LEFT_CENTER,
-                name,
-                FontId::proportional(14.5),
-                pal().muted,
-            );
-        }
         ui.add_space(12.0);
 
         if let Some(ch) = select_text {
+            if ch != self.current_text {
+                self.player = None;
+            }
             self.unread.remove(&ch);
             self.current_text = ch.clone();
             self.s.last_text_channel = Some(ch);
@@ -1508,6 +1544,9 @@ impl App {
                         ui.horizontal(|ui| {
                             ui.label(RichText::new("#").size(19.0).color(pal().faint));
                             ui.label(RichText::new(&self.current_text).size(18.0).strong());
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                self.members_button(ui);
+                            });
                         });
                     });
                 self.update_bar(ui);
@@ -1679,25 +1718,13 @@ impl App {
     }
 
     fn messages(&mut self, ui: &mut egui::Ui) {
-        let mut want: Vec<Attachment> = Vec::new();
-        let mut open: Option<Attachment> = None;
-        self.message_list(ui, &mut want, &mut open);
-        let ppp = ui.ctx().pixels_per_point();
-        for a in want {
-            self.att.request(&a, ppp, &self.net);
-        }
-        if let Some(a) = open {
-            self.att.open_viewer(&a, &self.net);
-        }
+        let mut acts = Vec::new();
+        self.message_list(ui, &mut acts);
+        let ctx = ui.ctx().clone();
+        self.apply_acts(&ctx, acts);
     }
 
-    fn message_list(
-        &self,
-        ui: &mut egui::Ui,
-        want: &mut Vec<Attachment>,
-        open: &mut Option<Attachment>,
-    ) {
-        let images_state = &self.att.images;
+    fn message_list(&self, ui: &mut egui::Ui, acts: &mut Vec<attach_ui::Act>) {
         let Some(sess) = &self.session else { return };
         let msgs = sess
             .history
@@ -1796,60 +1823,14 @@ impl App {
                             });
                             for m in &msgs[i..j] {
                                 if !m.text.is_empty() {
-                                    message_text(ui, &m.text);
+                                    let link =
+                                        chat_text::show(ui, &m.text, &mut self.emoji.borrow_mut());
+                                    if let Some(url) = link {
+                                        acts.push(attach_ui::Act::Link(url));
+                                    }
                                 }
                                 for a in &m.attachments {
-                                    let max = Vec2::new(
-                                        ui.available_width().min(attach::THUMB_MAX.x),
-                                        attach::THUMB_MAX.y,
-                                    );
-                                    let size = attach::display_size(a, max);
-                                    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-                                    let painter = ui.painter();
-                                    match images_state.get(&a.id) {
-                                        Some(ImgState::Ready(tex)) => {
-                                            egui::Image::new((tex.id(), size))
-                                                .corner_radius(CornerRadius::same(8))
-                                                .paint_at(ui, rect);
-                                        }
-                                        state => {
-                                            painter.rect_filled(
-                                                rect,
-                                                CornerRadius::same(8),
-                                                pal().raised,
-                                            );
-                                            painter.rect_stroke(
-                                                rect,
-                                                CornerRadius::same(8),
-                                                Stroke::new(1.0_f32, pal().line),
-                                                egui::StrokeKind::Inside,
-                                            );
-                                            let label = match state {
-                                                Some(ImgState::Failed(msg)) => msg.as_str(),
-                                                _ => "Loading image…",
-                                            };
-                                            painter.text(
-                                                rect.center(),
-                                                Align2::CENTER_CENTER,
-                                                label,
-                                                FontId::proportional(13.0),
-                                                pal().faint,
-                                            );
-                                            if state.is_none() && ui.is_rect_visible(rect) {
-                                                want.push(a.clone());
-                                            }
-                                        }
-                                    }
-                                    let resp = resp
-                                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                        .on_hover_text(format!(
-                                            "{} · {}",
-                                            a.name,
-                                            images::size_label(a.size)
-                                        ));
-                                    if resp.clicked() {
-                                        *open = Some(a.clone());
-                                    }
+                                    self.attachment_ui(ui, a, acts);
                                     ui.add_space(4.0);
                                 }
                             }
@@ -1864,60 +1845,8 @@ impl App {
     fn composer(&mut self, ui: &mut egui::Ui) {
         let online = self.conn == Conn::Online;
 
-        // Images waiting to be sent.
-        if !self.att.pending.is_empty() || self.att.preparing > 0 {
-            let mut remove = None;
-            ui.horizontal_wrapped(|ui| {
-                for (i, p) in self.att.pending.iter().enumerate() {
-                    Frame::new()
-                        .fill(pal().raised)
-                        .stroke(Stroke::new(1.0_f32, pal().line))
-                        .corner_radius(CornerRadius::same(10))
-                        .inner_margin(Margin::same(6))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                let s = p.preview.size_vec2();
-                                let scale = (48.0 / s.x.max(s.y)).min(1.0);
-                                ui.add(
-                                    egui::Image::new((p.preview.id(), s * scale))
-                                        .corner_radius(CornerRadius::same(6)),
-                                );
-                                ui.vertical(|ui| {
-                                    ui.set_max_width(150.0);
-                                    ui.spacing_mut().item_spacing.y = 0.0;
-                                    ui.add(
-                                        egui::Label::new(RichText::new(&p.name).size(13.0))
-                                            .truncate(),
-                                    );
-                                    ui.label(
-                                        RichText::new(images::size_label(p.bytes.len() as u64))
-                                            .size(12.0)
-                                            .color(pal().faint),
-                                    );
-                                });
-                                if close_button(ui)
-                                    .on_hover_text("Don't send this image")
-                                    .clicked()
-                                {
-                                    remove = Some(i);
-                                }
-                            });
-                        });
-                }
-                if self.att.preparing > 0 {
-                    ui.add(egui::Spinner::new().color(pal().muted));
-                    ui.label(
-                        RichText::new("Getting the image ready…")
-                            .size(13.0)
-                            .color(pal().muted),
-                    );
-                }
-            });
-            if let Some(i) = remove {
-                self.att.remove_pending(i);
-            }
-            ui.add_space(6.0);
-        }
+        // Files waiting to be sent, and uploads in progress.
+        self.pending_ui(ui);
 
         Frame::new()
             .fill(pal().raised)
@@ -1932,14 +1861,21 @@ impl App {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    // Attach an image.
+                    // Attach a file.
                     let can_attach = online && self.att.server_supports;
-                    let attach_tip = if !self.att.server_supports {
-                        "The server needs updating before images can be sent".to_string()
-                    } else if images::has_file_picker() {
-                        "Send an image (you can also drag one in or paste with Ctrl+V)".to_string()
+                    let what = if self.att.any_files() {
+                        "a file"
                     } else {
-                        "Drag an image onto the window, or paste one with Ctrl+V".to_string()
+                        "an image"
+                    };
+                    let attach_tip = if !self.att.server_supports {
+                        "The server needs updating before files can be sent".to_string()
+                    } else if images::has_file_picker() {
+                        format!(
+                            "Send {what} (you can also drag one in, or paste an image with Ctrl+V)"
+                        )
+                    } else {
+                        "Drag a file onto the window, or paste an image with Ctrl+V".to_string()
                     };
                     if attach_button(ui, can_attach)
                         .on_hover_text(attach_tip)
@@ -1988,19 +1924,7 @@ impl App {
                     let send_clicked = send_button(ui).clicked();
                     if (enter || send_clicked) && online {
                         let text = emoji::convert(self.composer.trim());
-                        let pending = self.att.take_pending();
-                        if !pending.is_empty() {
-                            for (i, p) in pending.into_iter().enumerate() {
-                                let header = UploadHeader {
-                                    channel: self.current_text.clone(),
-                                    text: if i == 0 { text.clone() } else { String::new() },
-                                    name: p.name,
-                                    mime: p.mime.to_string(),
-                                    width: p.width,
-                                    height: p.height,
-                                };
-                                self.net.upload(proto::encode_upload(&header, &p.bytes));
-                            }
+                        if self.att.send(&self.net, &self.current_text, &text) {
                             self.composer.clear();
                         } else if !text.is_empty() {
                             self.net.send(ClientMsg::Chat {
@@ -2045,7 +1969,14 @@ impl App {
         if !self.emoji_open {
             return;
         }
-        let mut chosen: Option<&'static str> = None;
+        if self.emoji_tab == RECENT && self.s.recent_emoji.is_empty() {
+            self.emoji_tab = 0;
+        }
+        const COLS: usize = 9;
+        const CELL: f32 = 38.0;
+        let mut chosen: Option<String> = None;
+        let mut hovered: Option<(&'static str, &'static str)> = None;
+        let just_opened = self.emoji_opened_frame == ctx.cumulative_frame_nr();
         let area = egui::Area::new(egui::Id::new("emoji_picker"))
             .order(egui::Order::Foreground)
             .pivot(Align2::RIGHT_BOTTOM)
@@ -2055,41 +1986,141 @@ impl App {
                 Frame::popup(ui.style())
                     .fill(pal().raised)
                     .stroke(Stroke::new(1.0_f32, pal().line))
-                    .inner_margin(Margin::same(8))
+                    .inner_margin(Margin::same(10))
                     .show(ui, |ui| {
-                        egui::Grid::new("emoji_grid")
-                            .spacing([2.0, 2.0])
-                            .show(ui, |ui| {
-                                for (n, (code, e)) in emoji::picker().iter().enumerate() {
-                                    let b = egui::Button::new(
-                                        RichText::new(*e).size(20.0).color(pal().text),
-                                    )
-                                    .frame(false)
-                                    .min_size(egui::vec2(34.0, 34.0));
-                                    if ui.add(b).on_hover_text(format!(":{code}:")).clicked() {
-                                        chosen = Some(e);
-                                    }
-                                    if (n + 1) % 8 == 0 {
-                                        ui.end_row();
+                        ui.set_width(COLS as f32 * CELL);
+                        let search = ui.add(
+                            egui::TextEdit::singleline(&mut self.emoji_search)
+                                .hint_text(RichText::new("Search emoji").color(pal().faint))
+                                .desired_width(f32::INFINITY)
+                                .margin(Margin::symmetric(8, 6)),
+                        );
+                        // A new popup sizes itself on its first frame without taking
+                        // input, so keep asking for focus for a few frames.
+                        if ctx.cumulative_frame_nr() <= self.emoji_opened_frame + 3 {
+                            search.request_focus();
+                            ctx.request_repaint();
+                        }
+                        let enter = search.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                        ui.add_space(6.0);
+                        // Tabs: recent, then one per group (its first emoji as the icon).
+                        let searching = !self.emoji_search.trim().is_empty();
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            let mut tabs: Vec<(u8, &str, &str)> = Vec::new();
+                            if !self.s.recent_emoji.is_empty() {
+                                tabs.push((RECENT, "🕘", "Recently used"));
+                            }
+                            for (g, label) in emoji::GROUPS {
+                                let icon = emoji::all().iter().find(|e| e.group == g).map_or("", |e| e.emoji);
+                                tabs.push((g, icon, label));
+                            }
+                            for (g, icon, label) in tabs {
+                                let (r, resp) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), Sense::click());
+                                let selected = !searching && self.emoji_tab == g;
+                                if selected || resp.hovered() {
+                                    ui.painter().rect_filled(r, CornerRadius::same(6), if selected { pal().raised_2 } else { theme::mix(pal().raised, pal().raised_2, 0.5) });
+                                }
+                                match backroom::twemoji::name_for(icon) {
+                                    Some(n) => chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, r.shrink(6.0)),
+                                    None => {
+                                        ui.painter().text(r.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), pal().muted);
                                     }
                                 }
-                            });
+                                if resp.on_hover_text(label).clicked() {
+                                    self.emoji_tab = g;
+                                    self.emoji_search.clear();
+                                }
+                            }
+                        });
                         ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(
-                                "Tip: type :) or :fire: and it turns into an emoji when sent.",
-                            )
-                            .size(12.0)
-                            .color(pal().faint),
-                        );
+                        let list: Vec<(&'static str, &'static str)> = if searching {
+                            emoji::search(&self.emoji_search).into_iter().map(|e| (e.emoji, e.name)).collect()
+                        } else if self.emoji_tab == RECENT {
+                            self.s
+                                .recent_emoji
+                                .iter()
+                                .filter_map(|r| {
+                                    let bare = r.trim_end_matches('\u{FE0F}');
+                                    emoji::all().iter().find(|e| e.emoji.trim_end_matches('\u{FE0F}') == bare)
+                                })
+                                .map(|e| (e.emoji, e.name))
+                                .collect()
+                        } else {
+                            emoji::all().iter().filter(|e| e.group == self.emoji_tab).map(|e| (e.emoji, e.name)).collect()
+                        };
+                        let rows = list.len().div_ceil(COLS);
+                        egui::ScrollArea::vertical()
+                            .id_salt(("emoji_scroll", self.emoji_tab, searching))
+                            .max_height(CELL * 7.0)
+                            .min_scrolled_height(CELL * 7.0)
+                            .auto_shrink([false, false])
+                            .show_rows(ui, CELL, rows, |ui, range| {
+                                ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+                                for row in range {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 0.0;
+                                        for (e, name) in list.iter().skip(row * COLS).take(COLS) {
+                                            let (r, resp) = ui.allocate_exact_size(egui::vec2(CELL, CELL), Sense::click());
+                                            if resp.hovered() {
+                                                ui.painter().rect_filled(r, CornerRadius::same(6), pal().raised_2);
+                                                hovered = Some((e, name));
+                                            }
+                                            if let Some(n) = backroom::twemoji::name_for(e) {
+                                                chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, r.shrink(6.0));
+                                            }
+                                            if resp.clicked() {
+                                                chosen = Some(e.to_string());
+                                            }
+                                        }
+                                    });
+                                }
+                            });
+                        if enter {
+                            if let Some((e, _)) = list.first() {
+                                chosen = Some(e.to_string());
+                            }
+                        }
+                        if searching && list.is_empty() {
+                            ui.label(RichText::new("No emoji found.").color(pal().faint));
+                        }
+                        // Footer: what's under the pointer, and its :code:.
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(30.0);
+                            match hovered {
+                                Some((e, name)) => {
+                                    let (r, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::hover());
+                                    if let Some(n) = backroom::twemoji::name_for(e) {
+                                        chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, r);
+                                    }
+                                    let code = emoji::code_for(e).map(|c| format!("  :{c}:")).unwrap_or_default();
+                                    ui.label(RichText::new(format!("{name}{code}")).size(13.0).color(pal().muted));
+                                }
+                                None => {
+                                    ui.label(
+                                        RichText::new("Tip: type :) or :fire: and it turns into an emoji when sent.")
+                                            .size(12.0)
+                                            .color(pal().faint),
+                                    );
+                                }
+                            }
+                        });
                     });
             });
         if let Some(e) = chosen {
-            self.insert_emoji(ctx, e);
+            self.insert_emoji(ctx, &e);
+            let bare = e.trim_end_matches('\u{FE0F}').to_string();
+            self.s
+                .recent_emoji
+                .retain(|r| r.trim_end_matches('\u{FE0F}') != bare);
+            self.s.recent_emoji.insert(0, e);
+            self.s.recent_emoji.truncate(27);
+            self.s.save();
             self.emoji_open = false;
+            self.emoji_search.clear();
             return;
         }
-        let just_opened = self.emoji_opened_frame == ctx.cumulative_frame_nr();
         let pressed_elsewhere = !just_opened
             && ctx.input(|i| i.pointer.any_pressed())
             && !area.response.contains_pointer()
@@ -2098,6 +2129,7 @@ impl App {
                 .contains(ctx.input(|i| i.pointer.interact_pos().unwrap_or_default()));
         if pressed_elsewhere || ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.emoji_open = false;
+            self.emoji_search.clear();
         }
     }
 
@@ -2178,17 +2210,25 @@ impl App {
             });
         if open_external {
             let (id, name) = (v.id.clone(), v.name.clone());
-            match self.att.raw_bytes(&id) {
-                Some(bytes) => {
-                    if let Err(e) = images::open_externally(&id, &name, &bytes) {
-                        self.show_banner(format!("Couldn't open the image ({e})."), true, Some(6));
+            if let Some(a) = self.find_attachment(&id).filter(|_| self.att.any_files()) {
+                self.open_file(&a);
+            } else {
+                match self.att.raw_bytes(&id) {
+                    Some(bytes) => {
+                        if let Err(e) = images::open_externally(&id, &name, &bytes) {
+                            self.show_banner(
+                                format!("Couldn't open the image ({e})."),
+                                true,
+                                Some(6),
+                            );
+                        }
                     }
+                    None => self.show_banner(
+                        "The image is still downloading. Try again in a moment.",
+                        false,
+                        Some(4),
+                    ),
                 }
-                None => self.show_banner(
-                    "The image is still downloading. Try again in a moment.",
-                    false,
-                    Some(4),
-                ),
             }
         }
         if close {
@@ -2211,7 +2251,7 @@ impl App {
         for path in dropped {
             if !self.att.server_supports {
                 self.show_banner(
-                    "The server needs updating before images can be sent.",
+                    "The server needs updating before files can be sent.",
                     false,
                     Some(6),
                 );
@@ -2260,9 +2300,16 @@ impl App {
             self.last_paste = Some(Instant::now());
             self.att.paste();
         }
-        for e in self.att.poll(ctx) {
-            self.show_banner(e, true, Some(6));
+        let (notes, finished) = self.att.poll(ctx);
+        for (text, error) in notes {
+            self.show_banner(text, error, Some(6));
         }
+        self.on_fetched(ctx, finished);
+        // Uploads that finished: post their message.
+        for msg in std::mem::take(&mut self.att.ready_to_post) {
+            self.net.send(msg);
+        }
+        self.poll_player(ctx);
     }
 
     fn drop_overlay(&self, ctx: &egui::Context) {
@@ -2288,10 +2335,12 @@ impl App {
                     Stroke::new(2.0_f32, pal().accent),
                     egui::StrokeKind::Inside,
                 );
-                let text = if self.att.server_supports {
-                    "Drop to send this image"
+                let text = if !self.att.server_supports {
+                    "The server needs updating before files can be sent"
+                } else if self.att.any_files() {
+                    "Drop to send"
                 } else {
-                    "The server needs updating before images can be sent"
+                    "Drop to send this image"
                 };
                 p.text(
                     screen.center(),
@@ -2688,6 +2737,17 @@ impl App {
                             }
                             self.s.save();
                         }
+                        ui.add_space(4.0);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(
+                                    "Emoji: Twemoji by Twitter, Inc. and contributors (CC-BY 4.0). Emoji names: emojibase (MIT).",
+                                )
+                                .size(11.5)
+                                .color(pal().faint),
+                            )
+                            .wrap(),
+                        );
                         ui.add_space(10.0);
                         ui.separator();
                         ui.add_space(4.0);

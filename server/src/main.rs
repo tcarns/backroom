@@ -8,6 +8,7 @@ mod log;
 mod accounts;
 mod auth;
 mod config;
+mod files;
 mod selfupdate;
 
 use config::Config;
@@ -22,7 +23,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes};
 
 const OUT_QUEUE: usize = 512;
@@ -53,6 +55,8 @@ struct Client {
     token_hash: Option<String>,
     /// An app from before accounts: can read, but not chat or talk.
     guest: bool,
+    /// For file transfers over HTTP (handed out in Welcome).
+    file_key: Option<String>,
 }
 
 struct State {
@@ -63,6 +67,8 @@ struct State {
     accounts: accounts::Store,
     /// Recent wrong passwords, by address.
     failures: HashMap<String, VecDeque<Instant>>,
+    /// Uploads in progress, file keys, storage use.
+    files: files::Files,
     next_id: u32,
     next_voice_order: u64,
     started: Instant,
@@ -330,6 +336,11 @@ fn handle_text(shared: &Shared, id: u32, text: &str) -> Option<ClientMsg> {
         ClientMsg::Ping { t } => st.send(id, &ServerMsg::Pong { t }),
         ClientMsg::Report { kind, message } => report(&mut st, id, &kind, &message),
         ClientMsg::GetAttachment { id: att } => request_attachment(&st, id, &att),
+        ClientMsg::Post {
+            channel,
+            text,
+            files: list,
+        } => files::post(&mut st, id, &channel, &text, list),
     }
     None
 }
@@ -576,40 +587,62 @@ fn handle_voice(shared: &Shared, id: u32, frame: &[u8]) {
 
 // ---------------------------------------------------------------- connections
 
-async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) {
+async fn handle_connection(mut stream: TcpStream, addr: SocketAddr, shared: Shared) {
     let _ = stream.set_nodelay(true);
-    let mut forwarded: Option<String> = None;
-    // Only a proxy on this PC (like the Cloudflare tunnel) may say who the
-    // visitor really is. From anyone else these headers could be made up to
-    // dodge a ban or the wrong-password limit.
-    let via_local_proxy = addr.ip().is_loopback();
-    let ws = tokio_tungstenite::accept_hdr_async(stream, |req: &Request, resp: Response| {
-        if via_local_proxy {
-            let h = req.headers();
-            forwarded = h
-                .get("cf-connecting-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|v| v.trim().to_string())
-                .or_else(|| {
-                    // The last entry is the one the proxy added; earlier ones
-                    // came from the visitor and could be anything.
-                    h.get("x-forwarded-for")
-                        .and_then(|v| v.to_str().ok())
-                        .map(|v| v.rsplit(',').next().unwrap_or("").trim().to_string())
-                })
-                .filter(|s| s.parse::<std::net::IpAddr>().is_ok());
-        }
-        Ok(resp)
-    })
-    .await;
-    let ip = forwarded.unwrap_or_else(|| addr.ip().to_string());
-    let ws = match ws {
-        Ok(ws) => ws,
+    let (req, leftover) = match files::read_head(&mut stream).await {
+        Ok(r) => r,
         Err(e) => {
-            debug!("conn", "Connection from {ip} wasn't a Backroom app ({e})");
+            trace!("conn", "Connection from {} ended early ({e})", addr.ip());
             return;
         }
     };
+    // Only a proxy on this PC (like the Cloudflare tunnel) may say who the
+    // visitor really is. From anyone else these headers could be made up to
+    // dodge a ban or the wrong-password limit.
+    let forwarded = if addr.ip().is_loopback() {
+        req.header("cf-connecting-ip")
+            .map(|v| v.trim().to_string())
+            .or_else(|| {
+                // The last entry is the one the proxy added; earlier ones
+                // came from the visitor and could be anything.
+                req.header("x-forwarded-for")
+                    .map(|v| v.rsplit(',').next().unwrap_or("").trim().to_string())
+            })
+            .filter(|s| s.parse::<std::net::IpAddr>().is_ok())
+    } else {
+        None
+    };
+    let ip = forwarded.unwrap_or_else(|| addr.ip().to_string());
+
+    // Files go over plain HTTP; everything else is the app's WebSocket.
+    if !req.is_websocket() {
+        files::handle(stream, req, leftover, ip, shared).await;
+        return;
+    }
+    let Some(key) = req.header("sec-websocket-key") else {
+        debug!(
+            "conn",
+            "Connection from {ip} wasn't a Backroom app (no WebSocket key)"
+        );
+        return;
+    };
+    let accept = derive_accept_key(key.as_bytes());
+    let reply = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"
+    );
+    if tokio::io::AsyncWriteExt::write_all(&mut stream, reply.as_bytes())
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let ws = tokio_tungstenite::WebSocketStream::from_partially_read(
+        stream,
+        leftover,
+        Role::Server,
+        None,
+    )
+    .await;
     let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = mpsc::channel::<Message>(OUT_QUEUE);
 
@@ -640,6 +673,7 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
                 admin: false,
                 token_hash: None,
                 guest: false,
+                file_key: None,
             },
         );
         id
@@ -722,6 +756,9 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr, shared: Shared) 
                 };
                 leave_voice(&mut st, id, Some(r));
             }
+            if let Some(key) = st.clients.get(&id).and_then(|c| c.file_key.clone()) {
+                st.files.keys.remove(&key);
+            }
             st.clients.remove(&id);
             if authed {
                 info!(
@@ -791,7 +828,10 @@ fn post_message(st: &mut State, message: ChatMessage) {
     if list.len() > limit {
         let extra = list.len() - limit;
         for old in list.drain(..extra) {
-            removed.extend(old.attachments.into_iter().map(|a| a.id));
+            for a in old.attachments {
+                removed.push(a.id);
+                removed.extend(a.poster.map(|p| p.id));
+            }
         }
     }
     st.history_dirty = true;
@@ -799,10 +839,11 @@ fn post_message(st: &mut State, message: ChatMessage) {
     if !removed.is_empty() {
         let dir = attachments_dir(&st.cfg);
         for id in removed {
-            let _ = std::fs::remove_file(dir.join(&id));
+            let freed = files::remove_file(&dir, &id);
+            st.files.stored = st.files.stored.saturating_sub(freed);
             debug!(
                 "chat",
-                "Deleted image {id} (its message aged out of history)"
+                "Deleted file {id} (its message aged out of history)"
             );
         }
     }
@@ -854,7 +895,9 @@ fn handle_upload(shared: &Shared, id: u32, frame: &[u8]) {
         debug!("chat", "Ignored a malformed image upload from {name}");
         return;
     };
-    let max = st.cfg.max_attachment_bytes;
+    // This older way of sending (apps before 0.7) goes over the voice connection,
+    // so it stays limited to images of a moderate size.
+    let max = st.cfg.max_attachment_bytes.min(files::MAX_WS_BYTES);
     if bytes.len() as u64 > max {
         warn!(
             "chat",
@@ -917,6 +960,9 @@ fn handle_upload(shared: &Shared, id: u32, frame: &[u8]) {
         size: bytes.len() as u64,
         width: header.width.min(20_000),
         height: header.height.min(20_000),
+        duration_ms: 0,
+        poster: None,
+        expired: false,
     };
     let text: String = header
         .text
@@ -955,7 +1001,9 @@ fn handle_upload(shared: &Shared, id: u32, frame: &[u8]) {
                     ts: now_ms(),
                     attachments: vec![attachment],
                 };
+                st.files.stored += message.attachments[0].size;
                 post_message(&mut st, message);
+                files::enforce_storage(&mut st);
             }
             Ok(Err(e)) => {
                 error!("chat", "Saving an image from {name} failed: {e}");
@@ -982,7 +1030,14 @@ fn request_attachment(st: &State, client_id: u32, att_id: &str) {
             .history
             .values()
             .flatten()
-            .any(|m| m.attachments.iter().any(|a| a.id == att_id));
+            .flat_map(|m| &m.attachments)
+            // Apps before 0.7 only get images over the voice connection, and not huge ones.
+            .any(|a| {
+                a.id == att_id
+                    && !a.expired
+                    && proto::IMAGE_MIMES.contains(&a.mime.as_str())
+                    && a.size <= files::MAX_WS_BYTES
+            });
     if !known {
         st.send(
             client_id,
@@ -1020,31 +1075,38 @@ fn request_attachment(st: &State, client_id: u32, att_id: &str) {
     });
 }
 
-/// Delete stored images no message refers to any more.
-fn cleanup_attachments(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>>) {
+/// Delete stored files no message refers to any more (and unfinished uploads).
+/// Returns the bytes still stored.
+fn cleanup_attachments(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>>) -> u64 {
     let Ok(entries) = std::fs::read_dir(attachments_dir(cfg)) else {
-        return;
+        return 0;
     };
     let keep: HashSet<&str> = history
         .values()
         .flatten()
-        .flat_map(|m| m.attachments.iter().map(|a| a.id.as_str()))
+        .flat_map(|m| &m.attachments)
+        .filter(|a| !a.expired)
+        .flat_map(|a| {
+            std::iter::once(a.id.as_str()).chain(a.poster.as_ref().map(|p| p.id.as_str()))
+        })
         .collect();
     let mut removed = 0;
+    let mut stored = 0;
     for entry in entries.flatten() {
         let name = entry.file_name();
-        if !keep.contains(name.to_string_lossy().as_ref())
-            && std::fs::remove_file(entry.path()).is_ok()
-        {
+        if keep.contains(name.to_string_lossy().as_ref()) {
+            stored += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        } else if std::fs::remove_file(entry.path()).is_ok() {
             removed += 1;
         }
     }
     if removed > 0 {
         info!(
             "chat",
-            "Removed {removed} stored images that are no longer in chat history"
+            "Removed {removed} stored files that are no longer in chat history"
         );
     }
+    stored
 }
 
 // ---------------------------------------------------------------- console commands
@@ -1172,7 +1234,7 @@ async fn run(cfg: Arc<Config>) {
         }
     };
     let history = load_history(&cfg);
-    cleanup_attachments(&cfg, &history);
+    let stored = cleanup_attachments(&cfg, &history);
     let shared: Shared = Arc::new(Mutex::new(State {
         cfg: cfg.clone(),
         clients: HashMap::new(),
@@ -1180,6 +1242,7 @@ async fn run(cfg: Arc<Config>) {
         history_dirty: false,
         accounts,
         failures: HashMap::new(),
+        files: files::Files::new(stored),
         next_id: 0,
         next_voice_order: 0,
         started: Instant::now(),
@@ -1284,10 +1347,15 @@ async fn run(cfg: Arc<Config>) {
         let shared = shared.clone();
         tokio::spawn(async move {
             let mut every = tokio::time::interval(Duration::from_secs(1));
+            let mut seconds: u64 = 0;
             loop {
                 every.tick().await;
+                seconds += 1;
                 let (snapshot, restart) = {
                     let mut st = shared.lock().unwrap();
+                    if seconds % 60 == 0 {
+                        files::sweep(&mut st);
+                    }
                     if st.accounts.dirty {
                         if let Err(e) = st.accounts.save() {
                             error!("auth", "{e}");
