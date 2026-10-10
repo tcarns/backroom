@@ -2,14 +2,23 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.8.6 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.9.0 (app and server).
 
 ## Waiting on the owner
-- Ship the two unreleased changes below as 0.8.7 now, or bundle them?
-- Message & media caching (play videos without waiting): being discussed in
-  its own thread, nothing built.
+- Try 0.9.0 on Windows: a clip someone sends should play at once (no
+  "Downloading %"), window keeps its size after the update restart.
 
-## On main, not released yet
+## In 0.9.0
+- Preload (`client/src/downloads.rs`): video/audio attachments visible in the
+  open channel and at most `Settings.preload_mb` (default 50, 0 = off) download
+  in the background, one at a time, no progress shown until Play is pressed;
+  a failed preload isn't retried (`no_preload`), Play still works. Settings,
+  Appearance and videos, "Downloads": preload slider (0-200 MB), cache size
+  (`cache_mb`, 0.25-20 GB, default 2 GB) and space in use. Cache is pruned
+  (oldest first) at start, after each download and when the size changes.
+  Checked under Wine: a clip sent by the bot landed in the cache without
+  Play; Settings page shown. Not done: streaming while downloading (option B
+  in `analysis/media-caching-options.md`) for big files.
 - Main window opens at its last size, place and maximized state (also after
   an update restart): `Settings.window`, tracked each frame by
   `App::remember_window` and applied by `main_viewport` (both `update_ui.rs`),
@@ -19,7 +28,7 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   instead of `anchor`). Both checked under Wine.
 
 ## Earlier
-- The video freeze The video freeze (0.8.2: app and Windows volume mixer hung a
+- The video freeze (0.8.2: app and Windows volume mixer hung a
   few seconds into a video) is fixed and confirmed on the owner's machine:
   lock-order deadlock in `media.rs` (0.8.3, see troubleshooting); 0.8.5 resets
   the fallbacks the freeze had switched on and adds a "Play videos here again"

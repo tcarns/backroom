@@ -2,6 +2,13 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.9.0
+
+- Videos and audio play right away: clips up to 50 MB start downloading as soon as they show up in the chat, so pressing Play doesn't wait for a download. Change the size (or turn it off) in Settings, Appearance and videos, "Download videos and audio ahead of time". Bigger files still download when you press Play.
+- Settings shows how much space downloaded files use, and lets you pick how much they may use (2 GB unless you change it). The oldest files are removed when it's full.
+- TUFFcord opens at the same size and place you left it, also after installing an update.
+- The Settings window can be moved: drag it by its title.
+
 ## 0.8.6
 
 - Settings is split into categories down the left side: Voice and audio, Appearance and videos, Account, and Updates and about. Click one to see its settings.
