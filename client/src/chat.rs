@@ -189,9 +189,6 @@ impl App {
                                     })
                                     .response
                                     .rect;
-                                if !deleting {
-                                    continue;
-                                }
                                 // The last one in a group also covers the bottom of the avatar.
                                 let bottom = if k + 1 == j - i {
                                     body.bottom().max(group_top + 40.0)
@@ -202,16 +199,20 @@ impl App {
                                     row.min + 8.0..=row.max - 8.0,
                                     top - 2.0..=bottom + 2.0,
                                 );
+                                // A subtle highlight under the pointer; red when it would delete.
                                 if ui.rect_contains_pointer(area) {
+                                    let fill = if deleting {
+                                        theme::mix(pal().bg, pal().red, 0.1)
+                                    } else {
+                                        theme::mix(pal().bg, pal().raised, 0.6)
+                                    };
                                     ui.painter().set(
                                         bg,
-                                        egui::Shape::rect_filled(
-                                            area,
-                                            CornerRadius::same(4),
-                                            theme::mix(pal().bg, pal().red, 0.1),
-                                        ),
+                                        egui::Shape::rect_filled(area, CornerRadius::same(4), fill),
                                     );
-                                    delete_target = Some((area, m));
+                                    if deleting {
+                                        delete_target = Some((area, m));
+                                    }
                                 }
                             }
                         });

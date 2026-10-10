@@ -16,9 +16,17 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 - Repo is in the project settings and the project uses the "TUFFcord" cloud
   environment, whose setup script installs the toolchain before a thread starts
   (source: `analysis/cloud-env-setup.sh` in the project files). A check thread
-  confirmed: auto clone, tools present, CLAUDE.md loaded, doctor ran. Not yet
-  seen: a Windows build there (`tools/windows.sh check`).
+  confirmed: auto clone, tools present, CLAUDE.md loaded, doctor ran. Windows
+  `.exe` builds work there since `tools/setup.sh` builds Rust's missing Windows
+  startup objects (2026-10-10); the app runs under Wine, audio plays.
 - `tools/setup.sh` only before building or testing (~5 min bare, all passing).
+
+## Unreleased (on main, ships with the next version)
+- Chat messages get a subtle highlight under the pointer (Discord style).
+- Video and audio players: the volume bar is now a vertical popup above the
+  speaker button, shown while it's hovered (`client/src/volume_ui.rs`); click
+  still mutes, scroll still changes volume. Checked under Wine on the audio
+  player; the video bar uses the same code but Wine shows no video picture.
 
 ## Check early next session
 - `tests/run.py --compat` in the Release workflow: first runs on the next release.

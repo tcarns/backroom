@@ -7,6 +7,7 @@
 
 use crate::attach::{self, Fetch, ImgState, Then};
 use crate::theme::{self, pal};
+use crate::volume_ui::volume_control;
 use crate::App;
 use backroom::files as xfer;
 use backroom::media::{self, Player};
@@ -53,8 +54,6 @@ impl Drop for Playing {
 }
 
 const CARD_W: f32 = 420.0;
-/// Width of the little volume bar next to the speaker button.
-const VOLUME_BAR: f32 = 56.0;
 
 fn card_frame() -> Frame {
     Frame::new()
@@ -364,7 +363,7 @@ impl App {
                     tg.clone(),
                     Color32::WHITE,
                 );
-                let right = bar.right() - 46.0 - 26.0 - 2.0 - VOLUME_BAR - 10.0;
+                let right = bar.right() - 46.0 - 26.0 - 10.0;
                 let seek = Rect::from_min_max(
                     egui::pos2(tx + tg.size().x + 12.0, bar.top() + 8.0),
                     egui::pos2(right, bar.bottom() - 8.0),
@@ -379,7 +378,7 @@ impl App {
                         acts.push(Act::Seek(f as f64 * st.duration));
                     }
                 }
-                self.volume_control(ui, right + 6.0, bar.center().y, true, acts);
+                volume_control(ui, self.s.media_level, egui::pos2(right + 19.0, bar.center().y), true, acts);
                 let open = Rect::from_center_size(
                     egui::pos2(bar.right() - 20.0, bar.center().y),
                     Vec2::splat(26.0),
@@ -440,46 +439,6 @@ impl App {
             });
     }
 
-    /// Speaker button (click to mute or unmute) and a small volume bar, starting
-    /// at `left`. Scrolling over either changes the volume too. Returns its width.
-    fn volume_control(&self, ui: &mut egui::Ui, left: f32, y: f32, on_dark: bool, acts: &mut Vec<Act>) -> f32 {
-        let level = self.s.media_level;
-        let muted = level <= 0.001;
-        let icon = Rect::from_center_size(egui::pos2(left + 13.0, y), Vec2::splat(26.0));
-        let resp = ui.interact(icon, ui.id().with(("vol", left as i32, y as i32)), Sense::click());
-        let ink = if on_dark { Color32::WHITE } else { pal().muted };
-        ui.painter().text(
-            icon.center(),
-            Align2::CENTER_CENTER,
-            if muted { "🔇" } else { "🔊" },
-            FontId::proportional(14.0),
-            if resp.hovered() { pal().accent } else { ink },
-        );
-        let resp = resp.on_hover_text(format!(
-            "{} · volume {}% (drag the bar or scroll to change it)",
-            if muted { "Unmute" } else { "Mute" },
-            (level * 100.0).round()
-        ));
-        if resp.clicked() {
-            acts.push(Act::ToggleMute);
-        }
-        let bar = Rect::from_min_max(
-            egui::pos2(icon.right() + 2.0, y - 7.0),
-            egui::pos2(icon.right() + 2.0 + VOLUME_BAR, y + 7.0),
-        );
-        if let Some(f) = seek_bar(ui, bar, level, on_dark) {
-            acts.push(Act::Volume(f));
-        }
-        let over = ui.rect_contains_pointer(icon.union(bar));
-        if over {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll.abs() > 0.5 {
-                acts.push(Act::Volume((level + scroll / 400.0).clamp(0.0, 1.0)));
-            }
-        }
-        icon.width() + 2.0 + VOLUME_BAR
-    }
-
     fn audio_ui(&self, ui: &mut egui::Ui, a: &Attachment, acts: &mut Vec<Act>) {
         let playing = self.player.as_ref().filter(|p| p.id == a.id);
         let status = playing.map(|p| p.player.status());
@@ -531,12 +490,12 @@ impl App {
                                 Vec2::new(ui.available_width() - 6.0, 16.0),
                                 Sense::hover(),
                             );
-                            let vol_w = 26.0 + 2.0 + VOLUME_BAR;
+                            let vol_w = 26.0;
                             let bar = Rect::from_min_max(
                                 row.min,
                                 egui::pos2(row.right() - vol_w - 10.0, row.bottom()),
                             );
-                            self.volume_control(ui, row.right() - vol_w, row.center().y, false, acts);
+                            volume_control(ui, self.s.media_level, egui::pos2(row.right() - 13.0, row.center().y), false, acts);
                             let frac = if s.duration > 0.0 {
                                 (s.position / s.duration) as f32
                             } else {

@@ -52,6 +52,18 @@ if "windows_targets" not in s:
 EOF
 fi
 
+# Ubuntu's rustc has no Windows startup objects; without them linking fails
+# with "cannot find rsbegin.o".
+win_lib=/usr/lib/rust-1.91/lib/rustlib/x86_64-pc-windows-gnu/lib
+if [ ! -f "$win_lib/rsend.o" ]; then
+  step "building Rust's Windows startup objects"
+  $SUDO mkdir -p "$win_lib"
+  for f in rsbegin rsend; do
+    $SUDO env RUSTC_BOOTSTRAP=1 PATH="$PATH" rustc --target x86_64-pc-windows-gnu --crate-type=lib --emit=obj \
+      -C panic=abort -C opt-level=3 -o "$win_lib/$f.o" "$STD_SRC/rtstartup/$f.rs"
+  done
+fi
+
 if [ ! -d "$HOME/.wine" ]; then
   step "first Wine start (creates its Windows folder)"
   WINEDEBUG=-all timeout 300 wineboot -i >/dev/null 2>&1 || true

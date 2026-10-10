@@ -39,6 +39,12 @@ bug or environment problem takes more than one try to understand.
   `gh api repos/tcarns/TUFFcord/releases/tags/vX`.
 - **`gh api -X PATCH repos/…` refused ("Repository settings writes are not
   permitted")** → owner must change repo settings on github.com.
+- **Windows build: "cannot find rsbegin.o / rsend.o"** → Ubuntu's rustc ships no
+  Windows startup objects; `tools/setup.sh` now builds them from
+  `library/rtstartup` into its rustlib folder (first seen in the cloud environment).
+- **`tools/wine-ui.sh start` never returns** (seen once in the cloud
+  environment, window was up) → run it in the background, or start
+  `wine backroom.exe` directly with `DISPLAY=:97` and take shots with `shot`.
 - **Wine: blank screenshots** → taken before the window drew; use
   `tools/wine-ui.sh start`, which waits for it. "Can't open X server" → the
   virtual display died; `start` brings it back.

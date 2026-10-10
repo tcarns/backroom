@@ -18,6 +18,7 @@ mod settings_window;
 mod sidebar;
 mod theme;
 mod update_ui;
+mod volume_ui;
 mod widgets;
 
 use attach::Attachments;

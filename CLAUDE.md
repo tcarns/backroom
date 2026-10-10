@@ -44,7 +44,8 @@ home must keep working.
     restart; `settings_window.rs` one function per section; `widgets.rs`
     shared drawing helpers (avatars, buttons, colors, time labels).
   - `accounts.rs` sign-in screen and account UI; `attach.rs` + `attach_ui.rs`
-    attachments and players; `members.rs`; `chat_text.rs`; `theme.rs`.
+    attachments and players; `volume_ui.rs` speaker button and volume popup;
+    `members.rs`; `chat_text.rs`; `theme.rs`.
   - Library (`lib.rs`, shared with `bin/bot.rs`, no UI): `media.rs` Media
     Foundation player (Windows only); `crash.rs`; `net.rs`, `voice.rs`,
     `audio.rs` (cpal, opus); `files.rs` HTTP transfers; `settings.rs`,
