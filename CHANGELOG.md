@@ -2,6 +2,12 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.10.0
+
+- Chat history is kept for good. Scroll to the top of a channel and older messages load in; "This is the start of #channel" shows when there's nothing older. Files in older messages stay too. (Needs the server to be 0.10.0. Older servers keep only the last 300 messages per channel, as before.)
+- Admins see a bar above the chat when the server is running low on room for sent files (from 80% of its limit, or when its disk is 80% full), so there's time to add space before old files are deleted.
+- The server can now run on a rented Linux machine, so it doesn't have to stay on someone's PC. It updates itself there too. Setup guide: docs/hosting.md on GitHub.
+
 ## 0.9.3
 
 - Videos show a picture from the clip before you press Play instead of a black box. If the sender's app picked a black frame (a clip that fades in), TUFFcord now looks a little further in. Older videos without a picture get one once they're downloaded (clips up to 50 MB download by themselves when they show up); it's kept on your computer.

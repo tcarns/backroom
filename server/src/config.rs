@@ -91,15 +91,16 @@ text_channels = ["general", "links", "memes"]
 voice_channels = ["Lounge", "Gaming", "Quiet room"]
 max_per_voice_channel = 8
 
-# Chat messages kept per text channel.
+# Recent chat messages per text channel, sent when someone signs in. Every
+# older message is kept too (in data/history) and loads as people scroll up.
 history_limit = 300
 
-# Largest file people can send, in megabytes. Files are kept in data/attachments
-# and deleted when their message ages out of history.
+# Largest file people can send, in megabytes. Files are kept in data/attachments.
 max_attachment_mb = 100
 
 # Most space all sent files may use together, in megabytes. When it's full, the
 # oldest files are deleted to make room (their messages stay, marked "expired").
+# Admins are warned in the app from 80% (and when the disk is 80% full).
 max_storage_mb = 5120
 
 # How much to log: trace, debug, info, warn, error, critical.
@@ -238,12 +239,12 @@ const OLD_ATTACHMENT_BLOCK: &str = r#"# Largest image people can send, in megaby
 # and deleted when their message ages out of history.
 max_attachment_mb = 8
 "#;
-const NEW_ATTACHMENT_BLOCK: &str = r#"# Largest file people can send, in megabytes. Files are kept in data/attachments
-# and deleted when their message ages out of history.
+const NEW_ATTACHMENT_BLOCK: &str = r#"# Largest file people can send, in megabytes. Files are kept in data/attachments.
 max_attachment_mb = 100
 
 # Most space all sent files may use together, in megabytes. When it's full, the
 # oldest files are deleted to make room (their messages stay, marked "expired").
+# Admins are warned in the app from 80% (and when the disk is 80% full).
 max_storage_mb = 5120
 "#;
 

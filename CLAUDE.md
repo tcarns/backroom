@@ -18,9 +18,9 @@ estimate the cost, propose a leaner alternative, and wait for Tyler's answer
 before building. If it fits, say so in one line and proceed. Same scrutiny for
 your own suggestions. Development itself stays usage-efficient.
 
-**Direction:** the server will later move to a small rented Linux
-host (systemd, Caddy for HTTPS, no Docker), one server at a time; hosting at
-home must keep working.
+**Direction:** the server runs on a small rented Linux
+host (systemd, Caddy for HTTPS, no Docker; `docs/hosting.md`), one server at a
+time; hosting at home must keep working.
 
 ## Start here
 - Run `tools/setup.sh` only before the first build or test in a session (not
@@ -41,7 +41,9 @@ home must keep working.
   `files.rs` file-transfer types and sniffing, `update.rs` GitHub release
   check, verified download, exe swap.
 - `server/src/` tokio current_thread. `main.rs` state, message handling, chat,
-  voice relay, console commands, `delete_message`; `auth.rs` sign-in, admin
+  voice relay, console commands; `history.rs` recent messages, archive of older
+  ones (`data/history/*.jsonl`), `loadOlder`, deleting messages; `storage.rs`
+  file storage limit, admins' storage warning; `auth.rs` sign-in, admin
   actions; `channels.rs` admins adding, renaming, deleting, reordering channels; `accounts.rs` storage (argon2); `files.rs` HTTP endpoints on the same
   port (POST/PUT/GET /files, Range, chunked bodies); `selfupdate.rs` watcher +
   updater; `config.rs` settings file and its upgrades; `log.rs`.
@@ -59,12 +61,15 @@ home must keep working.
     attachments and players; `downloads.rs` cache downloads, preloading; `posters.rs` video
     preview frames (sender's, else taken locally); `autoscroll.rs` middle-click scroll;
     `volume_ui.rs` speaker button and volume popup; `channels_ui.rs` channel admin (+, right-click menu, drag to reorder);
-    `members.rs`; `chat_text.rs`; `theme.rs`.
+    `members.rs`; `chat_text.rs`; `theme.rs`; `history_ui.rs` loading older
+    messages on scroll up, admins' storage bar.
   - Library (`lib.rs`, shared with `bin/bot.rs`, no UI): `media.rs` Media
     Foundation player (Windows only); `crash.rs`; `net.rs`, `voice.rs`,
     `audio.rs` (cpal, opus); `files.rs` HTTP transfers; `settings.rs`,
     `applog.rs`, `updater.rs`, `emoji.rs`, `twemoji.rs`, `keys.rs`;
     `bin/bot.rs` headless test client (tones, `--send-file`).
+- `deploy/install.sh` sets up the server on a rented Ubuntu machine (systemd,
+  Caddy); guide in `docs/hosting.md`.
 - `tests/` end-to-end suites (Python), `tools/` scripts, `.github/workflows/`
   `tests.yml` (every push) and `release.yml` (publishes when the version rises).
 
@@ -88,7 +93,8 @@ home must keep working.
 - `--version` prints exactly `backroom-server <version>` (0.7.1 and earlier
   refuse an update otherwise). Readers accept `TUFFcord-server ` too.
 - Releases carry `backroom.exe` and `backroom-server.exe` copies alongside
-  `TUFFcord*.exe`, all listed in `SHA256SUMS.txt`.
+  `TUFFcord*.exe`, all listed in `SHA256SUMS.txt`; `TUFFcord-server-linux-x86_64`
+  is what Linux servers update from (built on Ubuntu 24.04).
 - Protocol: only add optional fields/messages; old clients skip unknown types.
 - `backroom-server.toml` / `TUFFcord-server.toml` hold the group password:
   never commit (both in .gitignore).

@@ -126,6 +126,11 @@ impl App {
                     members,
                     add_channels: features.iter().any(|f| f == proto::FEATURE_CHANNELS),
                     edit_channels: features.iter().any(|f| f == proto::FEATURE_CHANNEL_EDIT),
+                    older: crate::history_ui::Older::new(
+                        features.iter().any(|f| f == proto::FEATURE_OLDER_MESSAGES),
+                    ),
+                    storage_warning: None,
+                    storage_hidden: false,
                 });
                 self.conn = Conn::Online;
                 self.login_error = None;
@@ -298,6 +303,17 @@ impl App {
                 renamed,
             } => self.on_channels(text_channels, voice_channels, renamed),
             ServerMsg::Restarting { version } => self.server_restarting = Some(version),
+            ServerMsg::OlderMessages {
+                channel,
+                messages,
+                start,
+            } => self.on_older(ctx, channel, messages, start),
+            ServerMsg::StorageWarning { text, critical } => {
+                if let Some(sess) = self.session.as_mut() {
+                    sess.storage_warning = (!text.is_empty()).then_some((text, critical));
+                    sess.storage_hidden = false;
+                }
+            }
             m @ (ServerMsg::AccountUpdated { .. }
             | ServerMsg::Accounts { .. }
             | ServerMsg::AdminResult { .. }

@@ -30,8 +30,21 @@ Settled choices and why. Add one when a choice would otherwise be revisited.
   that watcher restarts the old path), and the server's `backroom.log` moves.
 - **Release builds panic = abort**, so crashes are recorded by a panic hook and a
   Windows exception filter rather than unwinding.
-- **Future hosting:** small Linux VPS, systemd (not Docker) and Caddy, chosen for
-  low memory; one server at a time (no multi-server app support).
+- **Hosting (0.10):** small Linux VPS (owner picked Hetzner Ashburn, Ubuntu
+  24.04, own domain via Cloudflare Registrar, DNS only), systemd (not Docker)
+  and Caddy, chosen for low memory; one server at a time (no multi-server app
+  support). The watcher stays on Linux too (it restarts after self-updates);
+  systemd restarts the watcher. Linux binary built on a pinned ubuntu-24.04
+  runner so its glibc matches. `deploy/install.sh` + `docs/hosting.md`.
+- **Full history, kept on disk (0.10, owner's choice over a bigger limit).**
+  `history_limit` is now only the recent window held in memory and sent on
+  sign-in; older messages go to append-only `data/history/<channel>.jsonl`,
+  with only line offsets in memory (8 bytes a message) and pages of 50 read on
+  `loadOlder`. Deleting an archived message overwrites its line in place with
+  a same-length tombstone so offsets stay valid. Files stay until
+  `max_storage_mb` (oldest first, archived included); admins are warned at
+  80%/95% of it or of the disk instead of files quietly expiring. Not chosen:
+  SQLite (new dependency) or object storage (S3/B2: dependency, second bill).
 - **Client UI split by area, not one big `main.rs` (2026-10-10).** `main.rs`
   had grown to 3.3k lines and every feature read large slices of it. Now each
   area (server messages, sidebar, chat, dialogs, settings, ...) is its own

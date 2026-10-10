@@ -21,7 +21,9 @@ concurrency:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Pinned: the Linux server is built here and needs a glibc no newer than
+    # the rented server's (Ubuntu 24.04).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -81,6 +83,10 @@ jobs:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS: -C link-arg=-static -C link-arg=-static-libgcc
         run: cargo build --release --target x86_64-pc-windows-gnu -p tuffcord-server --bin TUFFcord-server -p tuffcord --bin TUFFcord
 
+      - name: Build the Linux server
+        if: steps.version.outputs.new == 'true'
+        run: cargo build --release -p tuffcord-server --bin TUFFcord-server
+
       - name: Package
         if: steps.version.outputs.new == 'true'
         env:
@@ -98,7 +104,9 @@ jobs:
           cp TUFFcord/TUFFcord.exe TUFFcord/TUFFcord-server.exe .
           cp TUFFcord.exe backroom.exe
           cp TUFFcord-server.exe backroom-server.exe
-          sha256sum TUFFcord.exe TUFFcord-server.exe backroom.exe backroom-server.exe "TUFFcord-$TAG-windows.zip" > SHA256SUMS.txt
+          # The server for a rented Linux machine (see docs/hosting.md).
+          cp ../target/release/TUFFcord-server TUFFcord-server-linux-x86_64
+          sha256sum TUFFcord.exe TUFFcord-server.exe backroom.exe backroom-server.exe TUFFcord-server-linux-x86_64 "TUFFcord-$TAG-windows.zip" > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Release notes from CHANGELOG.md
@@ -117,5 +125,5 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           gh release create "$TAG" "dist/TUFFcord-$TAG-windows.zip" dist/TUFFcord.exe dist/TUFFcord-server.exe \
-            dist/backroom.exe dist/backroom-server.exe dist/SHA256SUMS.txt \
+            dist/backroom.exe dist/backroom-server.exe dist/TUFFcord-server-linux-x86_64 dist/SHA256SUMS.txt \
             --target "$GITHUB_SHA" --title "TUFFcord ${TAG#v}" --notes-file notes.md

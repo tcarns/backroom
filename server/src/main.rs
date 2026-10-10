@@ -10,13 +10,15 @@ mod auth;
 mod channels;
 mod config;
 mod files;
+mod history;
 mod selfupdate;
+mod storage;
 
 use config::Config;
 use futures_util::{SinkExt, StreamExt};
 use log::Level;
 use proto::*;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::BufRead;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -65,6 +67,10 @@ struct State {
     clients: HashMap<u32, Client>,
     history: BTreeMap<String, Vec<ChatMessage>>,
     history_dirty: bool,
+    /// Messages older than `history`.
+    archive: history::Archive,
+    /// What admins were last told about storage (see `storage`).
+    storage_warning: Option<(String, bool)>,
     accounts: accounts::Store,
     /// Recent wrong passwords, by address.
     failures: HashMap<String, VecDeque<Instant>>,
@@ -345,7 +351,8 @@ fn handle_text(shared: &Shared, id: u32, text: &str) -> Option<ClientMsg> {
         ClientMsg::DeleteMessage {
             channel,
             id: msg_id,
-        } => delete_message(&mut st, id, &channel, &msg_id),
+        } => history::delete_message(&mut st, id, &channel, &msg_id),
+        ClientMsg::LoadOlder { channel, before } => history::load_older(&st, id, &channel, before),
         ClientMsg::CreateChannel { name, voice } => channels::create(&mut st, id, &name, voice),
         ClientMsg::RenameChannel { name, to, voice } => {
             channels::rename(&mut st, id, &name, &to, voice)
@@ -428,7 +435,7 @@ fn chat(st: &mut State, id: u32, channel: &str, text: &str) {
         "{name} posted in #{channel} ({} characters)",
         message.text.chars().count()
     );
-    post_message(st, message);
+    history::post(st, message);
 }
 
 fn join_voice(st: &mut State, id: u32, channel: &str, muted: bool, deafened: bool) {
@@ -791,142 +798,7 @@ async fn handle_connection(mut stream: TcpStream, addr: SocketAddr, shared: Shar
     let _ = tokio::time::timeout(Duration::from_secs(2), writer).await;
 }
 
-// ---------------------------------------------------------------- history
-
-fn history_path(cfg: &Config) -> PathBuf {
-    cfg.data_dir.join("messages.json")
-}
-
-fn load_history(cfg: &Config) -> BTreeMap<String, Vec<ChatMessage>> {
-    let path = history_path(cfg);
-    let mut history: BTreeMap<String, Vec<ChatMessage>> = BTreeMap::new();
-    if path.exists() {
-        match std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
-        {
-            Ok(h) => history = h,
-            Err(e) => error!(
-                "chat",
-                "Could not read chat history ({e}). Starting with empty history."
-            ),
-        }
-    }
-    history.retain(|ch, _| cfg.text_channels.contains(ch));
-    for ch in &cfg.text_channels {
-        history.entry(ch.clone()).or_default();
-    }
-    history
-}
-
-fn save_history(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>>) {
-    let path = history_path(cfg);
-    let tmp = path.with_extension("json.tmp");
-    let result = std::fs::create_dir_all(&cfg.data_dir)
-        .and_then(|_| std::fs::write(&tmp, serde_json::to_vec(history).unwrap()))
-        .and_then(|_| std::fs::rename(&tmp, &path));
-    match result {
-        Ok(()) => trace!("chat", "Chat history saved"),
-        Err(e) => error!("chat", "Saving chat history failed: {e}"),
-    }
-}
-
 // ---------------------------------------------------------------- messages and images
-
-/// Add a message to history (dropping the oldest past the limit) and send it to everyone.
-fn post_message(st: &mut State, message: ChatMessage) {
-    let limit = st.cfg.history_limit;
-    let list = st.history.entry(message.channel.clone()).or_default();
-    list.push(message.clone());
-    let mut removed = Vec::new();
-    if list.len() > limit {
-        let extra = list.len() - limit;
-        for old in list.drain(..extra) {
-            for a in old.attachments {
-                removed.push(a.id);
-                removed.extend(a.poster.map(|p| p.id));
-            }
-        }
-    }
-    st.history_dirty = true;
-    st.last_chat = Some(Instant::now());
-    if !removed.is_empty() {
-        let dir = attachments_dir(&st.cfg);
-        for id in removed {
-            let freed = files::remove_file(&dir, &id);
-            st.files.stored = st.files.stored.saturating_sub(freed);
-            debug!(
-                "chat",
-                "Deleted file {id} (its message aged out of history)"
-            );
-        }
-    }
-    st.broadcast(&ServerMsg::Chat { message });
-}
-
-/// An admin deletes a message: gone from history for everyone, files and all.
-fn delete_message(st: &mut State, conn: u32, channel: &str, msg_id: &str) {
-    let by = st.who(conn);
-    // Check the account, not the connection: admin may have just been removed.
-    let admin = st
-        .clients
-        .get(&conn)
-        .and_then(|c| c.account)
-        .and_then(|a| st.accounts.get(a))
-        .is_some_and(|a| a.admin);
-    if !admin {
-        warn!("admin", "{by} tried to delete a message but isn't an admin");
-        st.send(
-            conn,
-            &ServerMsg::Error {
-                code: "not_admin".into(),
-                message: "Only admins can delete messages.".into(),
-            },
-        );
-        return;
-    }
-    let Some(list) = st.history.get_mut(channel) else {
-        return;
-    };
-    let Some(pos) = list.iter().position(|m| m.id == msg_id) else {
-        // Already gone (someone else deleted it, or it aged out): make sure the app forgets it too.
-        st.send(
-            conn,
-            &ServerMsg::MessageDeleted {
-                channel: channel.to_string(),
-                id: msg_id.to_string(),
-            },
-        );
-        return;
-    };
-    let message = list.remove(pos);
-    st.history_dirty = true;
-    let dir = attachments_dir(&st.cfg);
-    let mut files_removed = 0;
-    for a in &message.attachments {
-        for id in std::iter::once(&a.id).chain(a.poster.as_ref().map(|p| &p.id)) {
-            let freed = files::remove_file(&dir, id);
-            if freed > 0 {
-                files_removed += 1;
-            }
-            st.files.stored = st.files.stored.saturating_sub(freed);
-        }
-    }
-    warn!(
-        "admin",
-        "{by} deleted a message by {} in #{channel}{}",
-        message.author,
-        if files_removed > 0 {
-            format!(" ({files_removed} file(s) removed)")
-        } else {
-            String::new()
-        }
-    );
-    st.broadcast(&ServerMsg::MessageDeleted {
-        channel: channel.to_string(),
-        id: msg_id.to_string(),
-    });
-}
 
 fn attachments_dir(cfg: &Config) -> PathBuf {
     cfg.data_dir.join("attachments")
@@ -1080,8 +952,8 @@ fn handle_upload(shared: &Shared, id: u32, frame: &[u8]) {
                     attachments: vec![attachment],
                 };
                 st.files.stored += message.attachments[0].size;
-                post_message(&mut st, message);
-                files::enforce_storage(&mut st);
+                history::post(&mut st, message);
+                storage::enforce(&mut st);
             }
             Ok(Err(e)) => {
                 error!("chat", "Saving an image from {name} failed: {e}");
@@ -1153,40 +1025,6 @@ fn request_attachment(st: &State, client_id: u32, att_id: &str) {
     });
 }
 
-/// Delete stored files no message refers to any more (and unfinished uploads).
-/// Returns the bytes still stored.
-fn cleanup_attachments(cfg: &Config, history: &BTreeMap<String, Vec<ChatMessage>>) -> u64 {
-    let Ok(entries) = std::fs::read_dir(attachments_dir(cfg)) else {
-        return 0;
-    };
-    let keep: HashSet<&str> = history
-        .values()
-        .flatten()
-        .flat_map(|m| &m.attachments)
-        .filter(|a| !a.expired)
-        .flat_map(|a| {
-            std::iter::once(a.id.as_str()).chain(a.poster.as_ref().map(|p| p.id.as_str()))
-        })
-        .collect();
-    let mut removed = 0;
-    let mut stored = 0;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        if keep.contains(name.to_string_lossy().as_ref()) {
-            stored += entry.metadata().map(|m| m.len()).unwrap_or(0);
-        } else if std::fs::remove_file(entry.path()).is_ok() {
-            removed += 1;
-        }
-    }
-    if removed > 0 {
-        info!(
-            "chat",
-            "Removed {removed} stored files that are no longer in chat history"
-        );
-    }
-    stored
-}
-
 // ---------------------------------------------------------------- console commands
 
 fn console_commands(shared: Shared, updates: std::sync::mpsc::Sender<selfupdate::Request>) {
@@ -1252,7 +1090,7 @@ async fn restart_for_update(shared: &Shared, version: String) -> ! {
         st.broadcast(&ServerMsg::Restarting {
             version: version.clone(),
         });
-        save_history(&st.cfg, &st.history);
+        history::save(&st.cfg, &st.history);
         if st.accounts.dirty {
             let _ = st.accounts.save();
         }
@@ -1303,6 +1141,23 @@ fn main() {
     rt.block_on(run(Arc::new(cfg)));
 }
 
+/// `systemctl stop` (and restart) sends SIGTERM: save and exit like Ctrl+C.
+#[cfg(unix)]
+async fn stop_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    match signal(SignalKind::terminate()) {
+        Ok(mut s) => {
+            s.recv().await;
+        }
+        Err(_) => std::future::pending().await,
+    }
+}
+
+#[cfg(not(unix))]
+async fn stop_signal() {
+    std::future::pending().await
+}
+
 async fn run(cfg: Arc<Config>) {
     let accounts = match accounts::Store::load(&cfg.data_dir) {
         Ok(s) => s,
@@ -1311,13 +1166,17 @@ async fn run(cfg: Arc<Config>) {
             std::process::exit(1);
         }
     };
-    let history = load_history(&cfg);
-    let stored = cleanup_attachments(&cfg, &history);
+    let (archive, archived) = history::Archive::load(&cfg.data_dir, &cfg.text_channels);
+    let history = history::load(&cfg, &archived);
+    drop(archived);
+    let stored = history::cleanup_attachments(&cfg, &history, &archive);
     let shared: Shared = Arc::new(Mutex::new(State {
         cfg: cfg.clone(),
         clients: HashMap::new(),
         history,
         history_dirty: false,
+        archive,
+        storage_warning: None,
         accounts,
         failures: HashMap::new(),
         files: files::Files::new(stored),
@@ -1328,6 +1187,7 @@ async fn run(cfg: Arc<Config>) {
         restart_now: false,
         last_chat: None,
     }));
+    storage::check(&mut shared.lock().unwrap());
 
     let addr = format!("{}:{}", cfg.host, cfg.port);
     let mut bind = TcpListener::bind(&addr).await;
@@ -1433,6 +1293,7 @@ async fn run(cfg: Arc<Config>) {
                     let mut st = shared.lock().unwrap();
                     if seconds % 60 == 0 {
                         files::sweep(&mut st);
+                        storage::check(&mut st);
                     }
                     if st.accounts.dirty {
                         if let Err(e) = st.accounts.save() {
@@ -1450,7 +1311,7 @@ async fn run(cfg: Arc<Config>) {
                     restart_for_update(&shared, version).await;
                 }
                 if let Some(snapshot) = snapshot {
-                    save_history(&cfg, &snapshot);
+                    history::save(&cfg, &snapshot);
                 }
             }
         });
@@ -1473,11 +1334,12 @@ async fn run(cfg: Arc<Config>) {
     tokio::select! {
         _ = accept_loop => {}
         _ = tokio::signal::ctrl_c() => {}
+        _ = stop_signal() => {}
     }
     info!("server", "Shutting down");
     let mut st = shared.lock().unwrap();
     if st.history_dirty {
-        save_history(&st.cfg, &st.history);
+        history::save(&st.cfg, &st.history);
     }
     if st.accounts.dirty {
         let _ = st.accounts.save();

@@ -20,7 +20,7 @@ run=$(gh api "repos/$REPO/actions/workflows/release.yml/runs?per_page=1" --jq '.
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 urls=$(gh api "repos/$REPO/releases/tags/$tag" --jq '.assets[].browser_download_url' 2>/dev/null)
-want="TUFFcord.exe TUFFcord-server.exe backroom.exe backroom-server.exe SHA256SUMS.txt TUFFcord-$tag-windows.zip"
+want="TUFFcord.exe TUFFcord-server.exe backroom.exe backroom-server.exe TUFFcord-server-linux-x86_64 SHA256SUMS.txt TUFFcord-$tag-windows.zip"
 for f in $want; do
   grep -q "/$f\$" <<<"$urls"; ok $? "has $f"
 done
@@ -37,4 +37,7 @@ if command -v wine >/dev/null; then
 else
   echo "  --   no Wine: skipped the --version check"
 fi
+chmod +x "$dir/TUFFcord-server-linux-x86_64" 2>/dev/null
+said=$(timeout 30 "$dir/TUFFcord-server-linux-x86_64" --version 2>/dev/null)
+[ "$said" = "backroom-server $v" ]; ok $? "Linux server runs and says \"backroom-server $v\""
 [ $fails = 0 ] && echo "release $tag: ALL OK" || { echo "release $tag: $fails FAILED"; exit 1; }

@@ -99,6 +99,7 @@ pub fn rename(st: &mut State, conn: u32, name: &str, to: &str, voice: bool) {
         }
         st.history.insert(to.clone(), messages);
         st.history_dirty = true;
+        st.archive.rename(name, &to);
     }
     save(st, voice);
     warn!(
@@ -153,18 +154,25 @@ pub fn delete(st: &mut State, conn: u32, name: &str, voice: bool) {
         cfg.text_channels.remove(pos);
         let messages = st.history.remove(name).unwrap_or_default();
         st.history_dirty = true;
+        let (archived, archived_files) = st.archive.remove(name);
         let dir = attachments_dir(&st.cfg);
         let mut removed = 0;
-        for a in messages.iter().flat_map(|m| &m.attachments) {
-            for id in std::iter::once(&a.id).chain(a.poster.as_ref().map(|p| &p.id)) {
-                let freed = files::remove_file(&dir, id);
-                if freed > 0 {
-                    removed += 1;
-                }
-                st.files.stored = st.files.stored.saturating_sub(freed);
+        let ids = messages
+            .iter()
+            .flat_map(|m| &m.attachments)
+            .flat_map(|a| std::iter::once(&a.id).chain(a.poster.as_ref().map(|p| &p.id)))
+            .chain(&archived_files);
+        for id in ids {
+            let freed = files::remove_file(&dir, id);
+            if freed > 0 {
+                removed += 1;
             }
+            st.files.stored = st.files.stored.saturating_sub(freed);
         }
-        detail = format!(" ({} message(s), {removed} file(s))", messages.len());
+        detail = format!(
+            " ({} message(s), {removed} file(s))",
+            messages.len() + archived
+        );
     }
     save(st, voice);
     warn!(

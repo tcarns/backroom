@@ -273,12 +273,21 @@ fn reported_version(exe: &std::path::Path) -> Result<String, String> {
 /// The release file the server installs from. (Releases also carry a copy
 /// named `backroom-server.exe`, for servers from before the rename.)
 pub fn asset_name() -> String {
-    std::env::var("BACKROOM_SERVER_UPDATE_ASSET").unwrap_or_else(|_| "TUFFcord-server.exe".into())
+    std::env::var("BACKROOM_SERVER_UPDATE_ASSET").unwrap_or_else(|_| {
+        if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            "TUFFcord-server-linux-x86_64".into()
+        } else {
+            "TUFFcord-server.exe".into()
+        }
+    })
 }
 
-/// Installing by itself is for the Windows server (other builds can opt in for testing).
+/// Installing by itself is for the Windows server and the Linux one on a
+/// rented machine (other builds can opt in for testing).
 fn can_self_install() -> bool {
-    cfg!(windows) || std::env::var_os("BACKROOM_SERVER_UPDATE_ASSET").is_some()
+    cfg!(windows)
+        || cfg!(all(target_os = "linux", target_arch = "x86_64"))
+        || std::env::var_os("BACKROOM_SERVER_UPDATE_ASSET").is_some()
 }
 
 /// Asks from the console.

@@ -130,6 +130,14 @@ pub enum ClientMsg {
         voice: bool,
         index: usize,
     },
+    /// Messages older than the ones already shown. `before` is the `start` of
+    /// the last [`ServerMsg::OlderMessages`] for this channel (leave it out the
+    /// first time). Servers with [`FEATURE_OLDER_MESSAGES`] only.
+    LoadOlder {
+        channel: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+    },
 }
 
 /// A finished upload to attach to a message, with what the sender's app
@@ -419,6 +427,21 @@ pub enum ServerMsg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         renamed: Option<ChannelRenamed>,
     },
+    /// Answer to [`ClientMsg::LoadOlder`], oldest first. May hold messages the
+    /// app already has (skip those by id). `start` is where the next page
+    /// ends; 0 means there's nothing older.
+    OlderMessages {
+        channel: String,
+        messages: Vec<ChatMessage>,
+        start: u64,
+    },
+    /// Admins: the server is running out of room for files. Shown until a
+    /// new one arrives; an empty `text` means it's fine again.
+    StorageWarning {
+        text: String,
+        #[serde(default)]
+        critical: bool,
+    },
 }
 
 /// A channel's old and new name (see [`ServerMsg::Channels`]).
@@ -459,6 +482,8 @@ pub const FEATURE_CHANNELS: &str = "channels";
 /// Admins can rename, delete and reorder channels ([`ClientMsg::RenameChannel`],
 /// [`ClientMsg::DeleteChannel`], [`ClientMsg::MoveChannel`]).
 pub const FEATURE_CHANNEL_EDIT: &str = "channelEdit";
+/// Keeps every message; apps load older ones with [`ClientMsg::LoadOlder`] (0.10).
+pub const FEATURE_OLDER_MESSAGES: &str = "olderMessages";
 
 // ---------------------------------------------------------------- voice frames
 

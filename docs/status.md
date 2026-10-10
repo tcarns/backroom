@@ -2,36 +2,38 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.9.3 (app; server unchanged
-since 0.9.2 but released with it).
+**Last updated:** 2026-10-10. **Released:** 0.10.0 (app and server).
 
 ## Waiting on the owner
-- Confirm 0.9.3 on a real PC: video previews (new uploads, and older ones
-  once downloaded), middle-click auto scroll, button hover. Previews can't be
-  checked under Wine (it decodes no H.264), so they're unconfirmed.
+- Setting up the rented server by following `docs/hosting.md` (buy domain,
+  Hetzner Ashburn VPS, run `deploy/install.sh`, copy `data/` and the settings
+  file, set `max_storage_mb = 30000`). Not done by Claude: no accounts or
+  purchases without him. `install.sh` was syntax-checked only; its first real
+  run is on his VPS (no systemd in the cloud workspace).
 
-## In 0.9.3
-- Video previews (`client/src/posters.rs`, `media::is_dark`): posters already
-  existed since 0.7 (sender probes, uploads a JPEG, `Attachment.poster`). Cause
-  of the owner's black boxes not proven; likely a black first frame (fade-in,
-  or the source reader's first output after the seek) or a failed probe. Now:
-  the sender's probe skips near-black frames (up to ~2 s of video, then other
-  methods, keeping a black one only as a last resort); a received poster
-  that decodes near-black, a missing poster or one that can't be fetched
-  falls back to a frame taken from the cached clip (one job at a time),
-  saved as `<id>.jpg` in the cache; clips not downloaded yet are retried
-  when their download ends (preload or Play). Big clips not preloaded stay
-  black until played. Failures go to the log ("No preview frame ...").
-  Checked under Wine: good poster shows, black and missing posters trigger
-  the local attempt after preload (decoding itself fails there).
-- Middle-click auto scroll (`client/src/autoscroll.rs`): marker at the click,
-  speed grows with distance (12 px dead zone), stops on any click, Esc,
-  middle again, channel change, or letting go after hold-and-drag; off when
-  push-to-talk is the middle button. Stick-to-bottom is off while it runs
-  (it would undo scrolling up). Repaints only while on. Checked under Wine.
-- Mute, deafen, settings: `widgets::bar_button`, highlight mixed from the
-  bar color (the old `raised_2` fill was invisible in light themes) fading in
-  over 120 ms, icon brightens. Checked under Wine.
+## In 0.10.0
+- Full history: `server/src/history.rs` keeps the recent `history_limit` in
+  memory, appends older ones to `data/history/<channel>.jsonl`, answers
+  `loadOlder` with pages of 50 (`olderMessages`, feature `olderMessages`).
+  Archived files stay downloadable and count for the storage limit; admin
+  delete works on archived messages (in-place tombstone). Client:
+  `client/src/history_ui.rs` asks when the list top is in view, keeps the
+  view on the previous first message, shows "This is the start of #x".
+  Checked: `tests/test_history.py` (16 checks), unit test, Wine (scrolled 40
+  messages back to the start).
+- Storage warning: `server/src/storage.rs` (moved `enforce` there from
+  files.rs) warns admins at 80%/95% of `max_storage_mb` or of the disk
+  (statvfs / GetDiskFreeSpaceExW), at sign-in, after uploads and each minute;
+  app shows a bar above the chat (Wine screenshot taken). Sizes under 1 GB
+  shown in MB.
+- Linux server: release builds `TUFFcord-server-linux-x86_64` on a pinned
+  ubuntu-24.04 runner; Linux servers install their own updates; SIGTERM
+  (systemctl stop) saves and exits. Hosting guide `docs/hosting.md`, installer
+  `deploy/install.sh` (Caddy, ufw, systemd unit with HOST=127.0.0.1).
+
+## Next for hosting (after the owner's server is up)
+- Watch the first self-update on the VPS (journal should show the restart).
+- Optional, later: HTTPS built into the server (drops Caddy, ~30 MB).
 
 ## In 0.9.2
 - Sidebar and member list widths: drag the edge between them and the chat
@@ -135,17 +137,6 @@ since 0.9.2 but released with it).
 - `tests/run.py --compat` in the Release workflow: first runs on the next release.
 - Small fix pending: when `gh api` is refused, `tools/doctor.sh` prints GitHub's
   JSON error into its status line; send gh's errors to /dev/null and print `?`.
-
-## Planned, in order
-1. Hosting on a rented Linux server (owner's choice: small x86 VPS near the
-   group; systemd, Caddy for HTTPS with a domain, no Docker; one server at a time):
-   - Linux server build in each release; Linux self-update (download, swap,
-     exit; systemd restarts it; no watcher).
-   - Management without the server window: first admin from the settings file
-     (`admins = [...]`), status / log level / "update now" in the app's admin
-     settings.
-   - Setup guide (VPS, service file, Caddy, domain, copying `data/`).
-   - Later, optional: HTTPS built into the server (drops Caddy, ~20–40 MB).
 
 ## Undecided options (from the efficiency review)
 Full review with token estimates: `analysis/token-efficiency-review.md` in the

@@ -33,6 +33,7 @@ impl App {
                         });
                     });
                 self.update_bar(ui);
+                self.storage_bar(ui);
                 egui::TopBottomPanel::bottom("composer")
                     .frame(Frame::new().inner_margin(Margin {
                         left: 20,
@@ -55,19 +56,24 @@ impl App {
     pub(crate) fn messages(&mut self, ui: &mut egui::Ui) {
         let mut acts = Vec::new();
         let scroll = self.auto_scroll(ui, ui.max_rect());
-        self.message_list(ui, scroll, &mut acts);
+        let near_top = self.message_list(ui, scroll, &mut acts);
+        self.after_message_list(near_top);
         let ctx = ui.ctx().clone();
         self.apply_acts(&ctx, acts);
     }
 
     /// `scroll`: how far auto scroll moves the list this frame (positive: down).
+    /// Returns true when the top of the list is in view (time to load older messages).
     pub(crate) fn message_list(
         &self,
         ui: &mut egui::Ui,
         scroll: f32,
         acts: &mut Vec<attach_ui::Act>,
-    ) {
-        let Some(sess) = &self.session else { return };
+    ) -> bool {
+        let Some(sess) = &self.session else {
+            return false;
+        };
+        let anchor = sess.older.anchor.as_deref();
         let msgs = sess
             .history
             .get(&self.current_text)
@@ -79,6 +85,7 @@ impl App {
             .auto_shrink(false)
             .id_salt(&self.current_text)
             .show(ui, |ui| {
+                self.older_note(ui);
                 if scroll != 0.0 {
                     ui.scroll_with_delta_animation(
                         egui::vec2(0.0, -scroll),
@@ -203,6 +210,10 @@ impl App {
                                     })
                                     .response
                                     .rect;
+                                // Older messages were just added above: keep this one in place.
+                                if anchor == Some(m.id.as_str()) {
+                                    ui.scroll_to_rect(body, Some(Align::TOP));
+                                }
                                 // The last one in a group also covers the bottom of the avatar.
                                 let bottom = if k + 1 == j - i {
                                     body.bottom().max(group_top + 40.0)
@@ -269,7 +280,11 @@ impl App {
                         acts.push(attach_ui::Act::AskDelete(m.clone()));
                     }
                 }
-            });
+            })
+            .state
+            .offset
+            .y
+            < 150.0
     }
 
     pub(crate) fn composer(&mut self, ui: &mut egui::Ui) {

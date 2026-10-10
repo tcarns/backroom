@@ -7,7 +7,7 @@
 //! half an hour. What a file is (image, video…) is decided here from its first
 //! bytes, never from the sender's word.
 
-use crate::{attachments_dir, now_ms, post_message, random_id, Shared, State};
+use crate::{attachments_dir, history, now_ms, random_id, Shared, State};
 use proto::files::{self, HttpError, NewUpload, UploadCreated, UploadProgress, CHUNK, MAX_POSTER};
 use proto::{Attachment, ChatMessage, PostFile, Poster, ServerMsg};
 use std::collections::HashMap;
@@ -674,7 +674,7 @@ async fn write_piece(
 
 // ---------------------------------------------------------------- downloads
 
-/// A file that's attached to a message still in history (or is a poster of one).
+/// A file that's attached to a message in history (or is a poster of one).
 fn find(st: &State, id: &str) -> Option<(String, String, u64)> {
     for a in st.history.values().flatten().flat_map(|m| &m.attachments) {
         if a.expired {
@@ -689,7 +689,10 @@ fn find(st: &State, id: &str) -> Option<(String, String, u64)> {
             }
         }
     }
-    None
+    st.archive
+        .files
+        .get(id)
+        .map(|f| (f.mime.clone(), f.name.clone(), f.size))
 }
 
 async fn send(stream: &mut TcpStream, req: &Request, id: &str, shared: &Shared) {
@@ -897,54 +900,8 @@ pub fn post(st: &mut State, conn: u32, channel: &str, text: &str, list: Vec<Post
         ts: now_ms(),
         attachments,
     };
-    post_message(st, message);
-    enforce_storage(st);
-}
-
-/// Delete the oldest files until everything fits in `max_storage_mb`.
-/// Their messages stay, with the files marked expired.
-pub fn enforce_storage(st: &mut State) {
-    let max = st.cfg.max_storage_bytes;
-    while st.files.stored > max {
-        // The oldest message that still has a file.
-        let oldest = st
-            .history
-            .values()
-            .flatten()
-            .filter(|m| m.attachments.iter().any(|a| !a.expired))
-            .min_by_key(|m| m.ts)
-            .map(|m| (m.channel.clone(), m.id.clone()));
-        let Some((channel, msg_id)) = oldest else {
-            break;
-        };
-        let dir = attachments_dir(&st.cfg);
-        let mut gone = Vec::new();
-        if let Some(m) = st
-            .history
-            .get_mut(&channel)
-            .and_then(|l| l.iter_mut().find(|m| m.id == msg_id))
-        {
-            for a in m.attachments.iter_mut().filter(|a| !a.expired) {
-                a.expired = true;
-                gone.push(a.id.clone());
-                if let Some(p) = a.poster.take() {
-                    gone.push(p.id);
-                }
-            }
-        }
-        for id in &gone {
-            st.files.stored = st.files.stored.saturating_sub(remove_file(&dir, id));
-        }
-        st.history_dirty = true;
-        info!(
-            "files",
-            "Deleted {} old file(s) to stay under the storage limit",
-            gone.len()
-        );
-        for id in gone {
-            st.broadcast(&ServerMsg::AttachmentGone { id });
-        }
-    }
+    history::post(st, message);
+    crate::storage::enforce(st);
 }
 
 /// Delete a stored file. Returns how many bytes that freed.

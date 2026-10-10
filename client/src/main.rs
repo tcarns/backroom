@@ -15,6 +15,7 @@ mod chat_text;
 mod dialogs;
 mod downloads;
 mod emoji_picker;
+mod history_ui;
 mod members;
 mod posters;
 mod server_msgs;
@@ -198,6 +199,11 @@ struct Session {
     add_channels: bool,
     /// Admins can rename, delete and reorder channels (server 0.9.2+).
     edit_channels: bool,
+    /// Older messages load on scrolling up (server 0.10+); see `history_ui`.
+    older: history_ui::Older,
+    /// Admins: the server's storage warning (text, urgent), and whether it was closed.
+    storage_warning: Option<(String, bool)>,
+    storage_hidden: bool,
 }
 
 impl Session {
