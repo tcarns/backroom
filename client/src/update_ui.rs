@@ -1,12 +1,14 @@
-//! The "update available" bar, its controls and restarting into a new version.
+//! The "update available" bar, its controls and restarting into a new version
+//! (with the main window where it was).
 
 use crate::theme::pal;
 use crate::App;
-use tuffcord::images;
-use tuffcord::updater::{self, Phase};
 use eframe::egui::{self, Align, Frame, Layout, Margin, RichText, Sense};
 use proto::update::{self as updates, Release};
 use std::time::Duration;
+use tuffcord::images;
+use tuffcord::settings::{Settings, WindowPlace};
+use tuffcord::updater::{self, Phase};
 
 impl App {
     /// "TUFFcord X is available" bar above the chat.
@@ -163,4 +165,54 @@ impl App {
             }
         }
     }
+
+    /// Keep track of the main window's place and size (saved with the
+    /// settings on close and before restarting into an update).
+    pub(crate) fn remember_window(&mut self, ctx: &egui::Context) {
+        let place = ctx.input(|i| {
+            let v = i.viewport();
+            if v.minimized == Some(true) {
+                return None;
+            }
+            let maximized = v.maximized == Some(true);
+            let mut p = self.s.window.unwrap_or(WindowPlace {
+                pos: None,
+                size: [MIN_SIZE[0], MIN_SIZE[1]],
+                maximized,
+            });
+            p.maximized = maximized;
+            // A maximized window keeps the size and place it goes back to.
+            if !maximized {
+                if let Some(r) = v.inner_rect {
+                    p.size = [r.width(), r.height()];
+                }
+                p.pos = v.outer_rect.map(|r| [r.min.x, r.min.y]);
+            }
+            Some(p)
+        });
+        if place.is_some() && place != self.s.window {
+            self.s.window = place;
+        }
+    }
+}
+
+/// The smallest the main window gets.
+pub(crate) const MIN_SIZE: [f32; 2] = [620.0, 420.0];
+
+/// The main window, opened where and as big as it was last time.
+pub(crate) fn main_viewport(s: &Settings) -> egui::ViewportBuilder {
+    let mut v = egui::ViewportBuilder::default()
+        .with_title("TUFFcord")
+        .with_inner_size([1040.0, 700.0])
+        .with_min_inner_size(MIN_SIZE);
+    if let Some(w) = s.window {
+        v = v
+            .with_inner_size([w.size[0].max(MIN_SIZE[0]), w.size[1].max(MIN_SIZE[1])])
+            .with_maximized(w.maximized);
+        // Windows parks minimized windows at -32000; never open off screen like that.
+        if let Some([x, y]) = w.pos.filter(|p| p[0] > -10_000.0 && p[1] > -10_000.0) {
+            v = v.with_position([x, y]);
+        }
+    }
+    v
 }

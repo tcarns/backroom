@@ -4,12 +4,12 @@
 use crate::theme::pal;
 use crate::widgets::primary_button;
 use crate::{App, Conn};
-use tuffcord::net::{self, SignIn};
 use eframe::egui::{
     self, Align, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText, Sense, Stroke,
 };
 use proto::{Account, AccountSummary, AdminAction, ClientMsg, ServerMsg};
 use std::collections::HashMap;
+use tuffcord::net::{self, SignIn};
 
 #[derive(PartialEq, Clone, Copy, Default)]
 pub enum LoginMode {

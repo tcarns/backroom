@@ -5,7 +5,21 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 **Last updated:** 2026-10-10. **Released:** 0.8.6 (app and server).
 
 ## Waiting on the owner
-- Nothing open. The video freeze (0.8.2: app and Windows volume mixer hung a
+- Ship the two unreleased changes below as 0.8.7 now, or bundle them?
+- Message & media caching (play videos without waiting): being discussed in
+  its own thread, nothing built.
+
+## On main, not released yet
+- Main window opens at its last size, place and maximized state (also after
+  an update restart): `Settings.window`, tracked each frame by
+  `App::remember_window` and applied by `main_viewport` (both `update_ui.rs`),
+  saved on close and before the update restart. Not guarded against a monitor
+  that was unplugged since (window could open off screen).
+- Settings window can be dragged (opens centered via `pivot`/`default_pos`
+  instead of `anchor`). Both checked under Wine.
+
+## Earlier
+- The video freeze The video freeze (0.8.2: app and Windows volume mixer hung a
   few seconds into a video) is fixed and confirmed on the owner's machine:
   lock-order deadlock in `media.rs` (0.8.3, see troubleshooting); 0.8.5 resets
   the fallbacks the freeze had switched on and adds a "Play videos here again"

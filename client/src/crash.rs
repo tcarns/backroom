@@ -158,7 +158,8 @@ mod windows {
         unsafe {
             let mut module: HMODULE = std::ptr::null_mut();
             let ok = GetModuleHandleExW(
-                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                    | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                 addr as *const u16,
                 &mut module,
             );
@@ -185,10 +186,7 @@ mod windows {
                             1 => "writing",
                             _ => "running",
                         };
-                        format!(
-                            "memory error {op} {:#x}",
-                            rec.ExceptionInformation[1]
-                        )
+                        format!("memory error {op} {:#x}", rec.ExceptionInformation[1])
                     }
                     0xC00000FD => "stack overflow".to_string(),
                     0xC0000409 => "security check failure".to_string(),

@@ -4,13 +4,13 @@ use crate::attach::ImgState;
 use crate::theme::{self, pal};
 use crate::widgets::{close_button, time_label};
 use crate::{chat_text, App, Conn};
-use tuffcord::images;
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText,
     Sense, Stroke,
 };
 use proto::ClientMsg;
 use std::time::{Duration, Instant};
+use tuffcord::images;
 
 impl App {
     /// "Delete message?" after an admin clicks the trash can.

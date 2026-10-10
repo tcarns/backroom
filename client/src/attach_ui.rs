@@ -9,14 +9,14 @@ use crate::attach::{self, Fetch, ImgState, Then};
 use crate::theme::{self, pal};
 use crate::volume_ui::volume_control;
 use crate::App;
-use tuffcord::files as xfer;
-use tuffcord::media::{self, Player};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rect, RichText, Sense, Stroke,
     TextureHandle, TextureOptions, Vec2,
 };
 use proto::files::{duration_label, extension, kind_of, runs_code, size_label, Kind};
 use proto::Attachment;
+use tuffcord::files as xfer;
+use tuffcord::media::{self, Player};
 
 pub use tuffcord::settings::DEFAULT_MEDIA_LEVEL;
 
@@ -378,7 +378,13 @@ impl App {
                         acts.push(Act::Seek(f as f64 * st.duration));
                     }
                 }
-                volume_control(ui, self.s.media_level, egui::pos2(right + 19.0, bar.center().y), true, acts);
+                volume_control(
+                    ui,
+                    self.s.media_level,
+                    egui::pos2(right + 19.0, bar.center().y),
+                    true,
+                    acts,
+                );
                 let open = Rect::from_center_size(
                     egui::pos2(bar.right() - 20.0, bar.center().y),
                     Vec2::splat(26.0),
@@ -495,7 +501,13 @@ impl App {
                                 row.min,
                                 egui::pos2(row.right() - vol_w - 10.0, row.bottom()),
                             );
-                            volume_control(ui, self.s.media_level, egui::pos2(row.right() - 13.0, row.center().y), false, acts);
+                            volume_control(
+                                ui,
+                                self.s.media_level,
+                                egui::pos2(row.right() - 13.0, row.center().y),
+                                false,
+                                acts,
+                            );
                             let frac = if s.duration > 0.0 {
                                 (s.position / s.duration) as f32
                             } else {

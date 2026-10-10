@@ -22,13 +22,6 @@ mod volume_ui;
 mod widgets;
 
 use attach::Attachments;
-use tuffcord::audio::{self, DeviceList};
-use tuffcord::emoji;
-use tuffcord::keys::{self, GlobalKeys};
-use tuffcord::net::{Net, Wake};
-use tuffcord::settings::Settings;
-use tuffcord::updater::{self, Phase, Updater};
-use tuffcord::voice::{chime, Mixer, VoiceControls};
 use eframe::egui::{self, Key};
 use parking_lot::Mutex;
 use proto::update::{self as updates, Release};
@@ -39,6 +32,13 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use theme::pal;
+use tuffcord::audio::{self, DeviceList};
+use tuffcord::emoji;
+use tuffcord::keys::{self, GlobalKeys};
+use tuffcord::net::{Net, Wake};
+use tuffcord::settings::Settings;
+use tuffcord::updater::{self, Phase, Updater};
+use tuffcord::voice::{chime, Mixer, VoiceControls};
 
 // ---------------------------------------------------------------- palette
 
@@ -124,11 +124,7 @@ fn main() -> eframe::Result {
         ));
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("TUFFcord")
-            .with_inner_size([1040.0, 700.0])
-            .with_min_inner_size([620.0, 420.0])
-            .with_icon(app_icon()),
+        viewport: update_ui::main_viewport(&settings).with_icon(app_icon()),
         renderer: eframe::Renderer::Glow,
         vsync: true,
         ..Default::default()
@@ -773,6 +769,7 @@ impl eframe::App for App {
             self.settings_dirty = false;
             self.s.save();
         }
+        self.remember_window(ctx);
         self.handle_events(ctx);
         self.handle_keys(ctx);
         self.handle_image_input(ctx);

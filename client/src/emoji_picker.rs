@@ -2,10 +2,10 @@
 
 use crate::theme::{self, pal};
 use crate::{chat_text, App, RECENT};
-use tuffcord::emoji;
 use eframe::egui::{
     self, Align2, CornerRadius, FontId, Frame, Key, Margin, RichText, Sense, Stroke,
 };
+use tuffcord::emoji;
 
 impl App {
     /// Put an emoji where the cursor is in the message box.

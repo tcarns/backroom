@@ -4,14 +4,14 @@
 //! tuffcord-bot --server ws://127.0.0.1:3000/ws --name Bot1 --password pw --channel Lounge \
 //!              --tone 440 --listen 660,880 --seconds 6 [--mute-after 3] [--deafen]
 
-use tuffcord::net::{Net, NetEvent, SignIn};
-use tuffcord::voice::{Mixer, TxPipeline, VoiceControls};
 use parking_lot::Mutex;
 use proto::{ClientMsg, ServerMsg, FRAME_SAMPLES, SAMPLE_RATE};
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tuffcord::net::{Net, NetEvent, SignIn};
+use tuffcord::voice::{Mixer, TxPipeline, VoiceControls};
 
 fn arg(args: &[String], name: &str) -> Option<String> {
     args.iter()

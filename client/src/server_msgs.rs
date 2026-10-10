@@ -1,12 +1,12 @@
 //! Messages from the server: connection events and every `ServerMsg` the app handles.
 
 use crate::{App, Banner, Conn, Session};
-use tuffcord::net::NetEvent;
 use eframe::egui::{self};
 use proto::{ClientMsg, ServerMsg, FEATURE_ATTACHMENTS, FEATURE_FILES};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+use tuffcord::net::NetEvent;
 
 impl App {
     // ------------------------------------------------------------ network events

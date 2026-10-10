@@ -63,6 +63,19 @@ pub struct Settings {
     /// The two settings above were reset once in 0.8.5: before 0.8.3 a video
     /// could freeze the app, which then turned them on wrongly.
     pub video_fallbacks_reset: bool,
+    /// Where the main window was and how big, so the next start (also the
+    /// restart after an update) opens it the same way. Saved on close.
+    pub window: Option<WindowPlace>,
+}
+
+/// The main window's last place on screen, in logical pixels.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct WindowPlace {
+    /// Top-left corner of the frame; `None` where the system doesn't say.
+    pub pos: Option<[f32; 2]>,
+    /// Size inside the frame, before maximizing.
+    pub size: [f32; 2],
+    pub maximized: bool,
 }
 
 impl Default for Settings {
@@ -95,6 +108,7 @@ impl Default for Settings {
             video_gpu: true,
             play_outside: Vec::new(),
             video_fallbacks_reset: false,
+            window: None,
         }
     }
 }
@@ -154,7 +168,11 @@ pub fn move_old_folder(base: &std::path::Path) -> &'static str {
         }
         let _ = std::fs::create_dir_all(&new);
         let copied = std::fs::copy(old.join("settings.json"), new.join("settings.json")).is_ok();
-        return if copied { "copied settings" } else { "couldn't move" };
+        return if copied {
+            "copied settings"
+        } else {
+            "couldn't move"
+        };
     }
     for (from, to) in [
         ("backroom.log", "TUFFcord.log"),
@@ -250,14 +268,19 @@ mod tests {
         let new = base.join("TUFFcord");
         assert!(!old.exists());
         assert!(new.join("settings.json").exists());
-        assert_eq!(std::fs::read_to_string(new.join("TUFFcord.log")).unwrap(), "old log");
+        assert_eq!(
+            std::fs::read_to_string(new.join("TUFFcord.log")).unwrap(),
+            "old log"
+        );
         assert!(new.join("cache").join("abc.mp4").exists());
 
         // An old copy run again recreates Backroom; the new folder is left alone.
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("settings.json"), "{}").unwrap();
         assert_eq!(move_old_folder(&base), "already moved");
-        assert!(std::fs::read_to_string(new.join("settings.json")).unwrap().contains("Tyler"));
+        assert!(std::fs::read_to_string(new.join("settings.json"))
+            .unwrap()
+            .contains("Tyler"));
         let _ = std::fs::remove_dir_all(&base);
     }
 }

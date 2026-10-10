@@ -3,13 +3,13 @@
 use crate::theme::pal;
 use crate::widgets::{icon_button, paint_avatar, section_title};
 use crate::{members, App, VolumePop};
-use tuffcord::keys::{self};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Layout, Margin, RichText, Sense,
     Stroke,
 };
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
+use tuffcord::keys::{self};
 
 impl App {
     pub(crate) fn main_screen(&mut self, ctx: &egui::Context) {

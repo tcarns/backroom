@@ -3,7 +3,7 @@
 use crate::theme::{self, pal};
 use crate::widgets::theme_swatch;
 use crate::{spawn_update_check, App};
-use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Sense, Stroke, Vec2};
+use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Sense, Stroke};
 use proto::update::{self as updates};
 use std::time::{Duration, Instant};
 use tuffcord::audio::{self, DeviceList};
@@ -57,7 +57,8 @@ impl App {
         egui::Window::new(RichText::new("Settings").strong().size(17.0))
             .collapsible(false)
             .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .pivot(Align2::CENTER_CENTER)
+            .default_pos(ctx.screen_rect().center())
             .open(&mut open)
             .frame(
                 Frame::window(&ctx.style())

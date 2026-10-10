@@ -5,11 +5,11 @@ use crate::widgets::{
     attach_button, day_label, icon_button, paint_avatar, paint_trash, send_button, time_label,
 };
 use crate::{attach_ui, chat_text, App, Conn};
-use tuffcord::{emoji, images};
 use eframe::egui::{
     self, Align, Color32, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText, Sense, Stroke,
 };
 use proto::ClientMsg;
+use tuffcord::{emoji, images};
 
 impl App {
     pub(crate) fn chat(&mut self, ctx: &egui::Context) {

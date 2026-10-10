@@ -129,9 +129,7 @@ pub fn check_against(current: &str) -> Result<Option<Release>, String> {
                 break;
             }
             404 => continue, // no releases yet (or nothing under this name)
-            403 | 429 => {
-                return Err("GitHub asked us to slow down; will try again later".into())
-            }
+            403 | 429 => return Err("GitHub asked us to slow down; will try again later".into()),
             code => return Err(format!("GitHub answered with an error ({code})")),
         }
     }
@@ -320,7 +318,10 @@ pub fn download_verified(
 }
 
 /// Program names before the rename and after.
-const OLD_NAMES: [(&str, &str); 2] = [("backroom", "TUFFcord"), ("backroom-server", "TUFFcord-server")];
+const OLD_NAMES: [(&str, &str); 2] = [
+    ("backroom", "TUFFcord"),
+    ("backroom-server", "TUFFcord-server"),
+];
 
 static EXE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -348,7 +349,11 @@ pub fn adopt_new_name() -> Option<(PathBuf, PathBuf)> {
     // too, so `cleanup_leftovers` finds them.
     let old_len = exe.file_name().map_or(0, |n| n.len());
     for p in old_copies(&exe) {
-        if let Some(suffix) = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.get(old_len..)) {
+        if let Some(suffix) = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.get(old_len..))
+        {
             let _ = std::fs::rename(&p, suffixed(&new, suffix));
         }
     }
@@ -364,7 +369,9 @@ fn new_name(exe: &Path) -> Option<PathBuf> {
         Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".exe") => &name[..i],
         _ => name,
     };
-    let (_, new) = OLD_NAMES.iter().find(|(old, _)| old.eq_ignore_ascii_case(stem))?;
+    let (_, new) = OLD_NAMES
+        .iter()
+        .find(|(old, _)| old.eq_ignore_ascii_case(stem))?;
     Some(exe.with_file_name(format!("{new}{}", &name[stem.len()..])))
 }
 
@@ -568,10 +575,22 @@ mod tests {
     #[test]
     fn old_program_names_map_to_new_ones() {
         let d = Path::new("dir");
-        assert_eq!(new_name(&d.join("backroom.exe")), Some(d.join("TUFFcord.exe")));
-        assert_eq!(new_name(&d.join("Backroom.EXE")), Some(d.join("TUFFcord.EXE")));
-        assert_eq!(new_name(&d.join("backroom-server.exe")), Some(d.join("TUFFcord-server.exe")));
-        assert_eq!(new_name(&d.join("backroom-server")), Some(d.join("TUFFcord-server")));
+        assert_eq!(
+            new_name(&d.join("backroom.exe")),
+            Some(d.join("TUFFcord.exe"))
+        );
+        assert_eq!(
+            new_name(&d.join("Backroom.EXE")),
+            Some(d.join("TUFFcord.EXE"))
+        );
+        assert_eq!(
+            new_name(&d.join("backroom-server.exe")),
+            Some(d.join("TUFFcord-server.exe"))
+        );
+        assert_eq!(
+            new_name(&d.join("backroom-server")),
+            Some(d.join("TUFFcord-server"))
+        );
         assert_eq!(new_name(&d.join("TUFFcord.exe")), None);
         assert_eq!(new_name(&d.join("backroom-bot")), None);
         assert_eq!(new_name(&d.join("my-backroom.exe")), None);

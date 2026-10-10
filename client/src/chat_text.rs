@@ -6,12 +6,12 @@
 //! that room. A message that's nothing but a few emoji shows them big.
 
 use crate::theme::pal;
-use tuffcord::twemoji;
 use eframe::egui::{
     self, text::LayoutJob, Color32, FontId, Rect, Sense, TextFormat, TextureHandle, TextureOptions,
     Vec2,
 };
 use std::collections::{HashMap, VecDeque};
+use tuffcord::twemoji;
 
 /// Text size in messages (egui's Body style is set to this in theme.rs).
 pub const TEXT: f32 = 15.0;

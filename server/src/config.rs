@@ -130,7 +130,10 @@ fn settings_file(base: &Path, notes: &mut Vec<(Level, String)>) -> PathBuf {
         Ok(()) => {
             notes.push((
                 Level::Info,
-                format!("Renamed backroom-server.toml to {} (Backroom is now TUFFcord).", new.display()),
+                format!(
+                    "Renamed backroom-server.toml to {} (Backroom is now TUFFcord).",
+                    new.display()
+                ),
             ));
             new
         }
@@ -153,8 +156,14 @@ fn rename_in_file(path: &Path) -> Option<String> {
     for (old_line, new_line) in [
         ("app_name = \"Backroom\"", "app_name = \"TUFFcord\""),
         ("# Backroom server settings.", "# TUFFcord server settings."),
-        ("# Check GitHub for a newer Backroom.", "# Check GitHub for a newer TUFFcord."),
-        ("log_file = \"data/backroom.log\"", "log_file = \"data/TUFFcord.log\""),
+        (
+            "# Check GitHub for a newer Backroom.",
+            "# Check GitHub for a newer TUFFcord.",
+        ),
+        (
+            "log_file = \"data/backroom.log\"",
+            "log_file = \"data/TUFFcord.log\"",
+        ),
     ] {
         new = new
             .split_inclusive('\n')
@@ -170,10 +179,14 @@ fn rename_in_file(path: &Path) -> Option<String> {
     if new == text {
         return None;
     }
-    let renamed_app = !text.contains("app_name = \"TUFFcord\"") && new.contains("app_name = \"TUFFcord\"");
+    let renamed_app =
+        !text.contains("app_name = \"TUFFcord\"") && new.contains("app_name = \"TUFFcord\"");
     std::fs::write(path, new).ok()?;
     Some(if renamed_app {
-        format!("Updated {}: app_name is now \"TUFFcord\" (it was the old default, \"Backroom\").", path.display())
+        format!(
+            "Updated {}: app_name is now \"TUFFcord\" (it was the old default, \"Backroom\").",
+            path.display()
+        )
     } else {
         format!("Updated {} for the new name.", path.display())
     })
@@ -188,8 +201,15 @@ fn move_old_log(log: &Path) -> Option<String> {
     }
     let old = log.with_file_name("backroom.log");
     std::fs::rename(&old, log).ok()?;
-    let _ = std::fs::rename(old.with_file_name("backroom.log.1"), log.with_file_name("TUFFcord.log.1"));
-    Some(format!("Renamed the log {} to {}.", old.display(), log.display()))
+    let _ = std::fs::rename(
+        old.with_file_name("backroom.log.1"),
+        log.with_file_name("TUFFcord.log.1"),
+    );
+    Some(format!(
+        "Renamed the log {} to {}.",
+        old.display(),
+        log.display()
+    ))
 }
 
 /// Settings files written by 0.6.0 and earlier say images are limited to 8 MB.
@@ -499,7 +519,10 @@ mod tests {
         assert!(got.starts_with("# TUFFcord server settings."));
         assert!(got.contains("# Check GitHub for a newer TUFFcord.\r\n"));
         assert!(got.contains("password = \"secret\""));
-        assert!(got.contains("log_file = \"data/TUFFcord.log\""), "log is renamed too");
+        assert!(
+            got.contains("log_file = \"data/TUFFcord.log\""),
+            "log is renamed too"
+        );
         assert_eq!(got.matches("Backroom").count(), 0);
         let parsed: FileConfig = toml::from_str(&got).unwrap();
         assert_eq!(parsed.app_name.as_deref(), Some("TUFFcord"));
@@ -519,7 +542,10 @@ mod tests {
         let log = dir.join("TUFFcord.log");
         assert!(move_old_log(&log).is_some());
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "old");
-        assert_eq!(std::fs::read_to_string(dir.join("TUFFcord.log.1")).unwrap(), "older");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("TUFFcord.log.1")).unwrap(),
+            "older"
+        );
         std::fs::write(dir.join("backroom.log"), "again").unwrap();
         assert!(move_old_log(&log).is_none());
         assert!(move_old_log(&dir.join("custom.log")).is_none());

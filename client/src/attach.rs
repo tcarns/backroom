@@ -10,10 +10,6 @@
 //! happens on short-lived worker threads; results come back over a channel and
 //! become textures on the UI thread.
 
-use tuffcord::files::{self as xfer, Endpoint, Source};
-use tuffcord::images::{self, Prepared};
-use tuffcord::media;
-use tuffcord::net::{Net, Wake};
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2};
 use parking_lot::Mutex;
 use proto::files::{kind_of, Kind};
@@ -24,6 +20,10 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tuffcord::files::{self as xfer, Endpoint, Source};
+use tuffcord::images::{self, Prepared};
+use tuffcord::media;
+use tuffcord::net::{Net, Wake};
 
 /// Largest size an image is shown at in the chat.
 pub const THUMB_MAX: Vec2 = Vec2::new(420.0, 320.0);

@@ -102,8 +102,7 @@ mod imp {
                 // Decoders and graphics drivers run on this thread too; give them room.
                 .stack_size(8 * 1024 * 1024)
                 .spawn(move || {
-                    let result =
-                        unsafe { run(&path, size, volume, gpu_allowed, &s, rx, &wake) };
+                    let result = unsafe { run(&path, size, volume, gpu_allowed, &s, rx, &wake) };
                     if let Err(e) = result {
                         s.lock().status.error = Some(describe(&e));
                         wake();
