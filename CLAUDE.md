@@ -11,8 +11,10 @@ host (systemd, Caddy for HTTPS, no Docker), one server at a time; hosting at
 home must keep working.
 
 ## Start here
-- Fresh workspace (new session): `tools/setup.sh` installs everything, builds,
-  runs the tests and the health check (a few minutes the first time).
+- Run `tools/setup.sh` only before the first build or test in a session (not
+  for questions, docs or analysis): it installs what's missing, builds, runs the
+  tests and the health check (~5 min in a bare workspace, less when the cloud
+  environment has already installed the tools).
 - `tools/doctor.sh` runs at session start (hook in `.claude/settings.json`); its
   `doctor:` lines show version, release, GitHub runs, disk, problems. If they're
   not in context, run it.
