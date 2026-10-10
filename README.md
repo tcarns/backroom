@@ -7,7 +7,7 @@ Voice and text chat for your group, written in Rust. Two programs:
 - **TUFFcord.exe**: the app. Everyone runs this.
 - **TUFFcord-server.exe**: the server. Only the person hosting runs this.
 
-TUFFcord was called Backroom before 0.8.0. Copies that update themselves keep their old file names (`backroom.exe`, `backroom-server.exe`), and that's fine: shortcuts keep working. Settings, sign-ins, chat history and accounts carry over; `backroom-server.toml` is renamed to `TUFFcord-server.toml`, and the app's `%APPDATA%\Backroom` folder becomes `%APPDATA%\TUFFcord`.
+TUFFcord was called Backroom before 0.8.0. From 0.8.4, copies still named `backroom.exe` or `backroom-server.exe` rename themselves to `TUFFcord.exe` / `TUFFcord-server.exe` when started (make shortcuts again, and allow the server through the firewall again if Windows asks), and the server's `data\backroom.log` becomes `data\TUFFcord.log`. Settings, sign-ins, chat history and accounts carry over; `backroom-server.toml` is renamed to `TUFFcord-server.toml`, and the app's `%APPDATA%\Backroom` folder becomes `%APPDATA%\TUFFcord`.
 
 Voice goes through the server: each person sends their audio once and the server passes it on to everyone else in the channel. Nobody's router can block a direct connection, because there aren't any.
 
@@ -105,7 +105,7 @@ Edit `TUFFcord-server.toml` next to the server, then restart it:
 | `max_attachment_mb` | `100` | Largest file people can send, in MB |
 | `max_storage_mb` | `5120` | Most space all sent files may use together. When it's full, the oldest files are deleted (their messages stay, marked as cleared). |
 | `log_level` | `info` | How much to log |
-| `log_file` | `data/TUFFcord.log` | Log file. `""` logs to the window only. Servers set up before the rename keep `data/backroom.log`. |
+| `log_file` | `data/TUFFcord.log` | Log file. `""` logs to the window only. `data/backroom.log` from before the rename is switched to this one. |
 | `check_updates` | `true` | Check GitHub for a new version every 6 hours |
 | `auto_update` | `true` | Install new versions by itself (see Updates). `false` only tells you, and you type `update` to install. |
 
@@ -121,7 +121,7 @@ Files travel over plain HTTP on the server's port, separately from voice, so a b
 
 ## Logging
 
-**Server:** everything is logged to the server window and to the `log_file` (`data\TUFFcord.log`, or `data\backroom.log` on servers set up before the rename) next to `TUFFcord-server.exe`. When the log file passes 5 MB, it's renamed with `.1` on the end and a fresh one starts.
+**Server:** everything is logged to the server window and to the `log_file` (`data\TUFFcord.log`) next to `TUFFcord-server.exe`. When the log file passes 5 MB, it's renamed with `.1` on the end and a fresh one starts.
 
 **App:** each person's app keeps its own log in `%APPDATA%\TUFFcord\TUFFcord.log` (Settings → **Open log file**): sign-ins, lost connections, every error the app shows, and each file sent or downloaded, with the server's exact answer when something fails. It's replaced by a fresh one past 2 MB (the previous one is kept as `TUFFcord.log.1`).
 
@@ -203,12 +203,12 @@ Details are in `client/assets/NOTICE.md`.
 On Windows:
 1. Install Rust from rustup.rs.
 2. Install the Visual Studio Build Tools (C++) and CMake. These are needed to compile the Opus audio codec.
-3. Run `cargo build --release`. The programs land in `target\release\` as `backroom.exe` and `backroom-server.exe` (the code still uses the old name inside; the release renames them).
+3. Run `cargo build --release`. The programs land in `target\release\` as `TUFFcord.exe` and `TUFFcord-server.exe`.
 
 To cross-compile the Windows programs from Linux, follow the steps in `.github/workflows/release.yml`.
 
-`cargo test` runs the unit tests, and `tests/run.py` the end-to-end ones (real server, test bots, accounts, files, voice, self-update, an HTTPS tunnel like Cloudflare's; `--compat` adds checks against the previous release). GitHub runs both on every push, and the version checks before each release. The `backroom-bot` program is a headless test client that plays a tone and measures what it hears:
+`cargo test` runs the unit tests, and `tests/run.py` the end-to-end ones (real server, test bots, accounts, files, voice, self-update, an HTTPS tunnel like Cloudflare's; `--compat` adds checks against the previous release). GitHub runs both on every push, and the version checks before each release. The `tuffcord-bot` program is a headless test client that plays a tone and measures what it hears:
 
 ```
-backroom-bot --server ws://localhost:3000/ws --password pw --name Bot --channel Lounge --tone 440 --listen 660 --seconds 10
+tuffcord-bot --server ws://localhost:3000/ws --password pw --name Bot --channel Lounge --tone 440 --listen 660 --seconds 10
 ```

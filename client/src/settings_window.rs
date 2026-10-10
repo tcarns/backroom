@@ -3,9 +3,9 @@
 use crate::theme::{self, pal};
 use crate::widgets::theme_swatch;
 use crate::{spawn_update_check, App};
-use backroom::audio::{self, DeviceList};
-use backroom::keys::{self, GlobalKeys};
-use backroom::voice::chime;
+use tuffcord::audio::{self, DeviceList};
+use tuffcord::keys::{self, GlobalKeys};
+use tuffcord::voice::chime;
 use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Sense, Stroke, Vec2};
 use proto::update::{self as updates};
 use std::time::{Duration, Instant};
@@ -271,7 +271,7 @@ impl App {
             )
             .changed();
         ui.checkbox(&mut self.s.sounds, "Join, leave and message sounds");
-        if backroom::media::supported()
+        if tuffcord::media::supported()
             && ui
                 .checkbox(
                     &mut self.s.video_gpu,
@@ -365,10 +365,10 @@ impl App {
         }
         if ui
             .button("Open log file")
-            .on_hover_text(backroom::applog::path().display().to_string())
+            .on_hover_text(tuffcord::applog::path().display().to_string())
             .clicked()
         {
-            let _ = backroom::files::open_path(&backroom::applog::path());
+            let _ = tuffcord::files::open_path(&tuffcord::applog::path());
         }
         ui.add_space(4.0);
         ui.add(

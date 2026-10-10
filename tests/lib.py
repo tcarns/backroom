@@ -7,7 +7,7 @@ a last line `PASS <n> checks` or `FAIL <k> of <n> checks`. Everything else
 when something failed or with -v.
 
 Environment:
-  TUFF_BIN  folder with backroom-server and backroom-bot (default target/debug)
+  TUFF_BIN  folder with TUFFcord-server and tuffcord-bot (default target/debug)
   TUFF_OUT  folder for test output (default target/tests)
 """
 import asyncio, atexit, http.client as httpc, json, os, shutil, signal, socket, subprocess, sys, time
@@ -77,7 +77,7 @@ class Server:
         os.makedirs(self.dir, exist_ok=True)
         self.port = free_port()
         self.group = group
-        self.exe = binary("backroom-server", bin_dir)
+        self.exe = binary("TUFFcord-server", bin_dir)
         self.env = dict(os.environ, PASSWORD=group, PORT=str(self.port), CHECK_UPDATES="false",
                         NO_COLOR="1", BACKROOM_NO_WATCHER="1", LOG_LEVEL="debug",
                         DATA_DIR=os.path.join(self.dir, "data"),
@@ -229,8 +229,8 @@ class Conn:
 
 
 def bot(server_url, name, *args, bin_dir=None, password="g", seconds=3, env=None):
-    """Run backroom-bot to completion and return its JSON report."""
-    out = subprocess.run([binary("backroom-bot", bin_dir), "--server", server_url, "--password", password,
+    """Run tuffcord-bot to completion and return its JSON report."""
+    out = subprocess.run([binary("tuffcord-bot", bin_dir), "--server", server_url, "--password", password,
                           "--name", name, "--seconds", str(seconds), *args],
                          capture_output=True, text=True, timeout=seconds + 60, env=env)
     try:

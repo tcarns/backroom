@@ -76,7 +76,7 @@ async def run():
     check(st == 401, "no key, no download")
     st, h, b = http("GET", f"/files/{aid}", key)
     check(st == 404, "unposted uploads can't be downloaded")
-    st, h, b = http("GET", "/files/..%2f..%2fbackroom.log", key)
+    st, h, b = http("GET", "/files/..%2f..%2fTUFFcord.log", key)
     check(st == 404, "no path tricks")
 
     note("Older apps")

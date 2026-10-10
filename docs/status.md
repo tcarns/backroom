@@ -2,7 +2,7 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.8.3 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.8.4 (app and server).
 
 ## Waiting on the owner
 - **Video freeze (owner, 0.8.2)**: the app hung seconds into a video, with
@@ -21,6 +21,15 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   `.exe` builds work there since `tools/setup.sh` builds Rust's missing Windows
   startup objects (2026-10-10); the app runs under Wine, audio plays.
 - `tools/setup.sh` only before building or testing (~5 min bare, all passing).
+
+## In 0.8.4
+- Rename finished: crates `tuffcord`/`tuffcord-server`, programs `TUFFcord`,
+  `TUFFcord-server`, `tuffcord-bot`. Copies started as `backroom*.exe` rename
+  themselves (`proto::update::adopt_new_name`; checked under Wine and in the
+  selfupdate suite); the server's `data/backroom.log` becomes `TUFFcord.log`.
+  Kept for old copies: env var names, `--version` wording, `backroom*.exe`
+  release copies, old repo fallback. Users may need to remake shortcuts and
+  re-allow the server in the Windows firewall.
 
 ## In 0.8.3
 - Video freeze fix above (`client/src/media.rs`).
@@ -60,6 +69,4 @@ Owner wants to revisit H next.
 - D (server half): split server `main.rs` (1.5k lines) when it grows; cuts:
   voice, history, attachments.
 - E: automated UI tests (egui renders without a window) instead of screenshots.
-- G: finish the internal rename (crates, `BACKROOM_*` names); careful with update
-  compatibility (see CLAUDE.md "Never change").
 - H: keep the built-in video player, or open videos in the system player.

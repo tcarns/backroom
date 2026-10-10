@@ -226,7 +226,7 @@ impl App {
                                     egui::pos2(rect.left() + 42.0 + name_w + 11.0, name_y),
                                     egui::vec2(15.0, 15.0),
                                 );
-                                if let Some(n) = backroom::twemoji::name_for("👑") {
+                                if let Some(n) = tuffcord::twemoji::name_for("👑") {
                                     chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, crown);
                                 }
                                 let _ = ui

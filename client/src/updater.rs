@@ -93,7 +93,7 @@ impl Updater {
 
 fn run(release: &Release, phase: &Mutex<Phase>, wake: &Wake) -> Result<PathBuf, String> {
     let exe =
-        std::env::current_exe().map_err(|e| format!("Couldn't find the running app ({e})."))?;
+        update::current_exe().map_err(|e| format!("Couldn't find the running app ({e})."))?;
     let tmp = update::download_verified(release, &asset_name(), &exe, &mut |done, total| {
         *phase.lock() = Phase::Downloading { done, total };
         wake();

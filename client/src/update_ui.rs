@@ -2,8 +2,8 @@
 
 use crate::theme::pal;
 use crate::App;
-use backroom::images;
-use backroom::updater::{self, Phase};
+use tuffcord::images;
+use tuffcord::updater::{self, Phase};
 use eframe::egui::{self, Align, Frame, Layout, Margin, RichText, Sense};
 use proto::update::{self as updates, Release};
 use std::time::Duration;

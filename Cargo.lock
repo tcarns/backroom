@@ -172,53 +172,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
-name = "backroom"
-version = "0.8.3"
-dependencies = [
- "arboard",
- "chrono",
- "cpal",
- "dirs",
- "eframe",
- "futures-util",
- "image",
- "memory-stats",
- "nnnoiseless",
- "opus",
- "parking_lot",
- "proto",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-tungstenite",
- "ureq",
- "windows 0.61.3",
- "windows-core 0.61.2",
- "windows-sys 0.60.2",
-]
-
-[[package]]
-name = "backroom-server"
-version = "0.8.3"
-dependencies = [
- "argon2",
- "chrono",
- "futures-util",
- "getrandom 0.3.4",
- "httparse",
- "memory-stats",
- "proto",
- "serde",
- "serde_json",
- "sha2",
- "tokio",
- "tokio-tungstenite",
- "toml",
- "windows-sys 0.60.2",
-]
-
-[[package]]
 name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2384,7 +2337,7 @@ checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
 
 [[package]]
 name = "proto"
-version = "0.8.3"
+version = "0.8.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -3152,6 +3105,53 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "tuffcord"
+version = "0.8.4"
+dependencies = [
+ "arboard",
+ "chrono",
+ "cpal",
+ "dirs",
+ "eframe",
+ "futures-util",
+ "image",
+ "memory-stats",
+ "nnnoiseless",
+ "opus",
+ "parking_lot",
+ "proto",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite",
+ "ureq",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "tuffcord-server"
+version = "0.8.4"
+dependencies = [
+ "argon2",
+ "chrono",
+ "futures-util",
+ "getrandom 0.3.4",
+ "httparse",
+ "memory-stats",
+ "proto",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-tungstenite",
+ "toml",
+ "windows-sys 0.60.2",
+]
 
 [[package]]
 name = "tungstenite"

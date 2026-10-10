@@ -1,7 +1,9 @@
 # TUFFcord
 
 Voice and text chat for one friend group (all on Windows), in Rust. Called
-Backroom before 0.8; code, crate names and env vars still say `backroom`.
+Backroom before 0.8; only env vars and the compatibility names below still say
+`backroom` (crates: `tuffcord`, `tuffcord-server`; bins `TUFFcord`,
+`TUFFcord-server`, `tuffcord-bot`).
 Repo: github.com/tcarns/TUFFcord (was tcarns/backroom; GitHub redirects the old
 name, and `proto/src/update.rs` keeps it as a fallback). Owner: Tyler Carns.
 

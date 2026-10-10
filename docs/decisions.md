@@ -24,7 +24,10 @@ Settled choices and why. Add one when a choice would otherwise be revisited.
 - **Native TLS with the system's certificate store** (SChannel on Windows) for
   both the chat connection and HTTP, so whatever Windows trusts works.
 - **Rename to TUFFcord (0.8) keeps old names where older copies look for them:**
-  `--version` wording, `backroom*.exe` release copies, env var names.
+  `--version` wording, `backroom*.exe` release copies, env var names. Since
+  0.8.4 crates, programs and logs say TUFFcord; a copy started as
+  `backroom*.exe` renames itself (not when an old watcher started it, since
+  that watcher restarts the old path), and the server's `backroom.log` moves.
 - **Release builds panic = abort**, so crashes are recorded by a panic hook and a
   Windows exception filter rather than unwinding.
 - **Future hosting:** small Linux VPS, systemd (not Docker) and Caddy, chosen for

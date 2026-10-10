@@ -35,10 +35,18 @@ const STATUS_CONTROL_C_EXIT: i32 = 0xC000013Au32 as i32;
 /// with BACKROOM_NO_WATCHER=1, e.g. when a service manager already restarts it).
 /// Returns only in the server copy.
 pub fn watch_unless_child() {
-    if std::env::var_os(CHILD_VAR).is_some() || std::env::var_os("BACKROOM_NO_WATCHER").is_some() {
+    if std::env::var_os(CHILD_VAR).is_some() {
         return;
     }
-    let exe = match std::env::current_exe() {
+    // Started by hand (an old watcher restarts its child by the old path, so not
+    // then): a copy from before the rename takes its new name.
+    if let Some((old, new)) = proto::update::adopt_new_name() {
+        println!("TUFFcord: renamed {} to {}.", old.display(), new.display());
+    }
+    if std::env::var_os("BACKROOM_NO_WATCHER").is_some() {
+        return;
+    }
+    let exe = match proto::update::current_exe() {
         Ok(p) => p,
         Err(_) => return, // can't find ourselves: just be the server
     };
@@ -388,7 +396,7 @@ impl Checker {
             release.version,
             proto::update::CURRENT
         );
-        let result = std::env::current_exe()
+        let result = proto::update::current_exe()
             .map_err(|e| format!("Couldn't find the running server ({e})."))
             .and_then(|exe| {
                 let tmp = proto::update::download_verified(&release, &asset, &exe, &mut |_, _| {})?;

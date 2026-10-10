@@ -1,11 +1,11 @@
 //! Headless test client. Uses the app's real network and voice code, but plays a
 //! test tone instead of a microphone and measures what it hears.
 //!
-//! backroom-bot --server ws://127.0.0.1:3000/ws --name Bot1 --password pw --channel Lounge \
+//! tuffcord-bot --server ws://127.0.0.1:3000/ws --name Bot1 --password pw --channel Lounge \
 //!              --tone 440 --listen 660,880 --seconds 6 [--mute-after 3] [--deafen]
 
-use backroom::net::{Net, NetEvent, SignIn};
-use backroom::voice::{Mixer, TxPipeline, VoiceControls};
+use tuffcord::net::{Net, NetEvent, SignIn};
+use tuffcord::voice::{Mixer, TxPipeline, VoiceControls};
 use parking_lot::Mutex;
 use proto::{ClientMsg, ServerMsg, FRAME_SAMPLES, SAMPLE_RATE};
 use std::collections::BTreeMap;
@@ -88,7 +88,7 @@ fn main() {
     let mut tried_login = legacy;
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut my_id = 0;
-    let mut endpoint: Option<backroom::files::Endpoint> = None;
+    let mut endpoint: Option<tuffcord::files::Endpoint> = None;
     let mut joined = false;
     let mut errors: Vec<String> = Vec::new();
     while !joined && Instant::now() < deadline {
@@ -96,7 +96,7 @@ fn main() {
             match ev {
                 NetEvent::Server(ServerMsg::Welcome { id, file_key, .. }) => {
                     my_id = id;
-                    endpoint = file_key.map(|key| backroom::files::Endpoint {
+                    endpoint = file_key.map(|key| tuffcord::files::Endpoint {
                         base: proto::files::http_base(&server),
                         key,
                     });
@@ -149,7 +149,7 @@ fn main() {
     }
     let mut image_sent: Option<(String, usize)> = None;
     if let Some(path) = &send_image {
-        match backroom::images::prepare_file(std::path::Path::new(path), 8 << 20) {
+        match tuffcord::images::prepare_file(std::path::Path::new(path), 8 << 20) {
             Ok(p) => {
                 let header = proto::UploadHeader {
                     channel: "general".into(),
@@ -175,8 +175,8 @@ fn main() {
                 let started = Instant::now();
                 let never = std::sync::atomic::AtomicBool::new(false);
                 let updates = std::cell::Cell::new(0u32);
-                let src = backroom::files::Source::Path(path.clone());
-                match backroom::files::upload(
+                let src = tuffcord::files::Source::Path(path.clone());
+                match tuffcord::files::upload(
                     to,
                     &name,
                     &src,
@@ -272,7 +272,7 @@ fn main() {
                                     a.id
                                 ));
                                 let never = std::sync::atomic::AtomicBool::new(false);
-                                let r = backroom::files::download(
+                                let r = tuffcord::files::download(
                                     from,
                                     &a.id,
                                     &dest,
@@ -292,7 +292,7 @@ fn main() {
                 }
                 NetEvent::Attachment { id, bytes } => {
                     let (name, size) = expected.get(&id).cloned().unwrap_or_default();
-                    let decodes = backroom::images::decode_fit(&bytes, 64, 64).is_ok();
+                    let decodes = tuffcord::images::decode_fit(&bytes, 64, 64).is_ok();
                     images_seen.push(serde_json::json!({ "name": name, "bytes": bytes.len(), "sizeMatches": bytes.len() as u64 == size, "decodes": decodes }));
                 }
                 NetEvent::Server(ServerMsg::Error { message, .. }) => errors.push(message),

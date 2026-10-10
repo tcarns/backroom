@@ -55,7 +55,7 @@ struct FileConfig {
 }
 
 fn base_dir() -> PathBuf {
-    std::env::current_exe()
+    proto::update::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."))
@@ -145,8 +145,8 @@ fn settings_file(base: &Path, notes: &mut Vec<(Level, String)>) -> PathBuf {
 }
 
 /// Settings files from before the rename call the app Backroom. Lines still at
-/// their old default switch to TUFFcord; a name someone chose is left alone.
-/// (The log file keeps its old name so the log carries on in one place.)
+/// their old default switch to TUFFcord (the log file too; [`move_old_log`]
+/// renames the file itself); a name someone chose is left alone.
 fn rename_in_file(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     let mut new = text.clone();
@@ -154,6 +154,7 @@ fn rename_in_file(path: &Path) -> Option<String> {
         ("app_name = \"Backroom\"", "app_name = \"TUFFcord\""),
         ("# Backroom server settings.", "# TUFFcord server settings."),
         ("# Check GitHub for a newer Backroom.", "# Check GitHub for a newer TUFFcord."),
+        ("log_file = \"data/backroom.log\"", "log_file = \"data/TUFFcord.log\""),
     ] {
         new = new
             .split_inclusive('\n')
@@ -174,8 +175,21 @@ fn rename_in_file(path: &Path) -> Option<String> {
     Some(if renamed_app {
         format!("Updated {}: app_name is now \"TUFFcord\" (it was the old default, \"Backroom\").", path.display())
     } else {
-        format!("Updated the comments in {} for the new name.", path.display())
+        format!("Updated {} for the new name.", path.display())
     })
+}
+
+/// Servers set up before the rename logged to `backroom.log`. When the log is
+/// now `TUFFcord.log` in the same folder and doesn't exist yet, the old log (and
+/// its `.1` copy) is renamed so it carries on in one file.
+fn move_old_log(log: &Path) -> Option<String> {
+    if !log.file_name()?.eq_ignore_ascii_case("TUFFcord.log") || log.exists() {
+        return None;
+    }
+    let old = log.with_file_name("backroom.log");
+    std::fs::rename(&old, log).ok()?;
+    let _ = std::fs::rename(old.with_file_name("backroom.log.1"), log.with_file_name("TUFFcord.log.1"));
+    Some(format!("Renamed the log {} to {}.", old.display(), log.display()))
 }
 
 /// Settings files written by 0.6.0 and earlier say images are limited to 8 MB.
@@ -375,6 +389,9 @@ pub fn load() -> Config {
         Some(s) => Some(resolve(s)),
         None => Some(data_dir.join("TUFFcord.log")),
     };
+    if let Some(note) = log_file.as_deref().and_then(move_old_log) {
+        notes.push((Level::Info, note));
+    }
 
     let check_updates = match env("CHECK_UPDATES") {
         Some(v) => !["0", "false", "no", "off"].contains(&v.to_lowercase().as_str()),
@@ -482,7 +499,7 @@ mod tests {
         assert!(got.starts_with("# TUFFcord server settings."));
         assert!(got.contains("# Check GitHub for a newer TUFFcord.\r\n"));
         assert!(got.contains("password = \"secret\""));
-        assert!(got.contains("log_file = \"data/backroom.log\""), "log keeps its place");
+        assert!(got.contains("log_file = \"data/TUFFcord.log\""), "log is renamed too");
         assert_eq!(got.matches("Backroom").count(), 0);
         let parsed: FileConfig = toml::from_str(&got).unwrap();
         assert_eq!(parsed.app_name.as_deref(), Some("TUFFcord"));
@@ -495,6 +512,17 @@ mod tests {
         std::fs::write(dir.join("backroom-server.toml"), "x").unwrap();
         assert_eq!(settings_file(&dir, &mut notes), path);
         assert!(dir.join("backroom-server.toml").exists());
+
+        // The old log carries on under the new name, once.
+        std::fs::write(dir.join("backroom.log"), "old").unwrap();
+        std::fs::write(dir.join("backroom.log.1"), "older").unwrap();
+        let log = dir.join("TUFFcord.log");
+        assert!(move_old_log(&log).is_some());
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(dir.join("TUFFcord.log.1")).unwrap(), "older");
+        std::fs::write(dir.join("backroom.log"), "again").unwrap();
+        assert!(move_old_log(&log).is_none());
+        assert!(move_old_log(&dir.join("custom.log")).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -59,7 +59,8 @@ if [ ! -f "$win_lib/rsend.o" ]; then
   step "building Rust's Windows startup objects"
   $SUDO mkdir -p "$win_lib"
   for f in rsbegin rsend; do
-    $SUDO env RUSTC_BOOTSTRAP=1 PATH="$PATH" rustc --target x86_64-pc-windows-gnu --crate-type=lib --emit=obj \
+    # Ubuntu's 1.91 compiler, matching the source (a rustup rustc on PATH isn't).
+    $SUDO env RUSTC_BOOTSTRAP=1 /usr/lib/rust-1.91/bin/rustc --target x86_64-pc-windows-gnu --crate-type=lib --emit=obj \
       -C panic=abort -C opt-level=3 -o "$win_lib/$f.o" "$STD_SRC/rtstartup/$f.rs"
   done
 fi
@@ -75,7 +76,7 @@ if [ -z "$(git config user.email || true)" ]; then
 fi
 
 step "building and running the tests (first build takes a few minutes)"
-cargo build --quiet -p backroom-server --bin backroom-server -p backroom --bin backroom-bot --bin backroom
+cargo build --quiet -p tuffcord-server --bin TUFFcord-server -p tuffcord --bin tuffcord-bot --bin TUFFcord
 STD_SRC="$STD_SRC" tools/windows.sh check
 tests/run.py --no-build
 tools/doctor.sh

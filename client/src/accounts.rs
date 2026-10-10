@@ -4,7 +4,7 @@
 use crate::theme::pal;
 use crate::widgets::primary_button;
 use crate::{App, Conn};
-use backroom::net::{self, SignIn};
+use tuffcord::net::{self, SignIn};
 use eframe::egui::{
     self, Align, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText, Sense, Stroke,
 };
@@ -220,7 +220,7 @@ impl App {
 
     /// The server stopped us signing in (or threw us out).
     pub fn on_failed(&mut self, message: String, code: Option<String>) {
-        backroom::applog::warn(format!(
+        tuffcord::applog::warn(format!(
             "Couldn't sign in to {}: {message} ({})",
             self.s.server,
             code.as_deref().unwrap_or("no code")

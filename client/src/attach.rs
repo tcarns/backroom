@@ -3,17 +3,17 @@
 //! view and decoded at display size, GIFs animated, anything else downloaded on
 //! request), and the full-size image viewer.
 //!
-//! Files travel over HTTP on servers from 0.7 (see `backroom::files`). Older
+//! Files travel over HTTP on servers from 0.7 (see `tuffcord::files`). Older
 //! servers only take images, over the WebSocket, as before.
 //!
 //! Slow work (reading, shrinking, probing, uploading, downloading, decoding)
 //! happens on short-lived worker threads; results come back over a channel and
 //! become textures on the UI thread.
 
-use backroom::files::{self as xfer, Endpoint, Source};
-use backroom::images::{self, Prepared};
-use backroom::media;
-use backroom::net::{Net, Wake};
+use tuffcord::files::{self as xfer, Endpoint, Source};
+use tuffcord::images::{self, Prepared};
+use tuffcord::media;
+use tuffcord::net::{Net, Wake};
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2};
 use parking_lot::Mutex;
 use proto::files::{kind_of, Kind};
@@ -687,7 +687,7 @@ impl Attachments {
                     }
                     Err(e) => {
                         if !self.fall_back_to_websocket(&id, &e) {
-                            backroom::applog::warn(format!("Couldn't show image {id}: {e}"));
+                            tuffcord::applog::warn(format!("Couldn't show image {id}: {e}"));
                             self.images
                                 .insert(id, ImgState::Failed("Couldn't show this image.".into()));
                         }
@@ -734,7 +734,7 @@ impl Attachments {
                     }
                     Err(e) => {
                         if !self.fall_back_to_websocket(&id, &e) {
-                            backroom::applog::warn(format!("Couldn't show GIF {id}: {e}"));
+                            tuffcord::applog::warn(format!("Couldn't show GIF {id}: {e}"));
                             self.images
                                 .insert(id, ImgState::Failed("Couldn't show this GIF.".into()));
                         }
@@ -834,7 +834,7 @@ impl Attachments {
         if self.endpoint.is_none() || !self.ws_fallback.insert(id.to_string()) {
             return false;
         }
-        backroom::applog::warn(format!(
+        tuffcord::applog::warn(format!(
             "Fetching image {id} over HTTP failed ({error}); asking over the chat connection instead"
         ));
         self.images.insert(id.to_string(), ImgState::Requested);

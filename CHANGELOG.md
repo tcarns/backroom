@@ -2,6 +2,11 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.4
+
+- The last of the old name is gone. The app and server still called `backroom.exe` and `backroom-server.exe` (they kept that name when updating) rename themselves to `TUFFcord.exe` and `TUFFcord-server.exe` the next time they start. A shortcut or taskbar pin to the old name may need making again, and Windows may ask once more to let `TUFFcord-server.exe` through the firewall (click Allow).
+- The server's log `data\backroom.log` becomes `data\TUFFcord.log` (it carries on in the same file).
+
 ## 0.8.3
 
 - Fixed the app freezing (and taking Windows' volume mixer with it) a few seconds into a video. It wasn't the graphics card: the video player and Windows could end up waiting on each other forever. If 0.8.2 turned off "Use the graphics card for videos" after a freeze, you can turn it back on in Settings.

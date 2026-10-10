@@ -10,14 +10,14 @@
 # --quick skips the network checks. --keep leaves running processes alone
 # (used after a conversation summary, when a test may be running).
 cd "$(dirname "$0")/.." || exit 0
-REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github.com[:/]##; s#\.git$##'); REPO=${REPO:-tcarns/backroom}
+REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github.com[:/]##; s#\.git$##'); REPO=${REPO:-tcarns/TUFFcord}
 say() { printf '%s\n' "$*"; }
 problems=()
 
 # --- leftovers from earlier runs (nothing should be running at session start)
 ended=0
 keep=0; case " $* " in *" --keep "*) keep=1;; esac
-[ $keep = 1 ] || for name in backroom-server backroom-bot wineserver Xvfb; do
+[ $keep = 1 ] || for name in TUFFcord-server tuffcord-bot backroom-server backroom-bot wineserver Xvfb; do
   n=$(pgrep -x "$name" | wc -l)
   if [ "$n" -gt 0 ]; then pkill -x "$name"; ended=$((ended + n)); fi
 done

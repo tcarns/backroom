@@ -22,13 +22,13 @@ mod volume_ui;
 mod widgets;
 
 use attach::Attachments;
-use backroom::audio::{self, DeviceList};
-use backroom::emoji;
-use backroom::keys::{self, GlobalKeys};
-use backroom::net::{Net, Wake};
-use backroom::settings::Settings;
-use backroom::updater::{self, Phase, Updater};
-use backroom::voice::{chime, Mixer, VoiceControls};
+use tuffcord::audio::{self, DeviceList};
+use tuffcord::emoji;
+use tuffcord::keys::{self, GlobalKeys};
+use tuffcord::net::{Net, Wake};
+use tuffcord::settings::Settings;
+use tuffcord::updater::{self, Phase, Updater};
+use tuffcord::voice::{chime, Mixer, VoiceControls};
 use eframe::egui::{self, Key};
 use parking_lot::Mutex;
 use proto::update::{self as updates, Release};
@@ -42,12 +42,12 @@ use theme::pal;
 
 // ---------------------------------------------------------------- palette
 
-/// `backroom --check-media <file> <report.txt>`: read a video or audio file's
+/// `TUFFcord --check-media <file> <report.txt>`: read a video or audio file's
 /// details and play it for a few seconds without a window, writing what
 /// happened to the report. For checking playback problems on a PC.
 fn check_media(file: &std::path::Path, report: &std::path::Path) {
     let mut out = String::new();
-    match backroom::media::probe(file) {
+    match tuffcord::media::probe(file) {
         Ok(p) => out.push_str(&format!(
             "probe: {}x{}, {} ms, poster: {}\n",
             p.width,
@@ -63,7 +63,7 @@ fn check_media(file: &std::path::Path, report: &std::path::Path) {
     }
     let frames = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let wake: Wake = Arc::new(|| {});
-    match backroom::media::Player::open(file, [320, 180], 0.0, true, wake) {
+    match tuffcord::media::Player::open(file, [320, 180], 0.0, true, wake) {
         Ok(player) => {
             let start = Instant::now();
             let mut last = None;
@@ -103,17 +103,22 @@ fn main() -> eframe::Result {
     let resume = updater::take_resume();
     let just_updated = std::env::args().any(|a| a == "--updated");
     // Backroom's settings folder becomes TUFFcord's (first run after the rename).
-    backroom::settings::move_old_folders();
-    backroom::crash::install();
-    let last_run = backroom::crash::take_last_run();
+    tuffcord::settings::move_old_folders();
+    tuffcord::crash::install();
+    let last_run = tuffcord::crash::take_last_run();
+    // A copy from before the rename (updated in place) takes its new file name.
+    let renamed = updates::adopt_new_name();
     let settings = Settings::load();
-    backroom::applog::info(format!(
+    tuffcord::applog::info(format!(
         "TUFFcord {} started (log: {})",
         updates::CURRENT,
-        backroom::applog::path().display()
+        tuffcord::applog::path().display()
     ));
+    if let Some((old, new)) = renamed {
+        tuffcord::applog::info(format!("Renamed {} to {}", old.display(), new.display()));
+    }
     if let Some(p) = &last_run.interrupted {
-        backroom::applog::warn(format!(
+        tuffcord::applog::warn(format!(
             "Last time, the app closed in the middle of playing {}",
             p.describe()
         ));
@@ -142,7 +147,7 @@ fn main() -> eframe::Result {
         }),
     );
     // Closed normally: a video that was playing didn't cause anything.
-    backroom::crash::playing_stopped();
+    tuffcord::crash::playing_stopped();
     result
 }
 
@@ -341,7 +346,7 @@ impl App {
         s: Settings,
         resume: Option<updater::Resume>,
         just_updated: bool,
-        last_run: backroom::crash::LastRun,
+        last_run: tuffcord::crash::LastRun,
     ) -> Self {
         theme::apply(&cc.egui_ctx, &s.theme);
         emoji::install_font(&cc.egui_ctx);
@@ -404,11 +409,11 @@ impl App {
             crash_report: None,
             startup_notice: None,
             settings_dirty: false,
-            unmute_level: backroom::settings::DEFAULT_MEDIA_LEVEL,
+            unmute_level: tuffcord::settings::DEFAULT_MEDIA_LEVEL,
             emoji_tab: RECENT,
             emoji_search: String::new(),
         };
-        std::thread::spawn(backroom::files::prune_cache);
+        std::thread::spawn(tuffcord::files::prune_cache);
         app.apply_voice_flags();
         if app.s.check_updates {
             app.update_auto_started = true;
@@ -461,7 +466,7 @@ impl App {
 
     /// The previous run crashed, or ended while playing something: say so,
     /// tell the server's log once signed in, and avoid doing it again.
-    fn after_bad_exit(&mut self, last: backroom::crash::LastRun) {
+    fn after_bad_exit(&mut self, last: tuffcord::crash::LastRun) {
         let mut report = last.crash.clone().map(|c| format!("The app crashed: {c}"));
         if let Some(p) = last.interrupted {
             let why = if last.crash.is_some() {
@@ -624,9 +629,9 @@ impl App {
         // Everything the app tells the person goes in its log too.
         if self.banner.as_ref().is_none_or(|b| b.text != text) {
             if error {
-                backroom::applog::warn(format!("Shown: {text}"));
+                tuffcord::applog::warn(format!("Shown: {text}"));
             } else {
-                backroom::applog::info(format!("Shown: {text}"));
+                tuffcord::applog::info(format!("Shown: {text}"));
             }
         }
         self.banner = Some(Banner {

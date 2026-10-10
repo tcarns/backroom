@@ -1,20 +1,20 @@
 [package]
-name = "backroom"
+name = "tuffcord"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [lib]
-name = "backroom"
+name = "tuffcord"
 path = "src/lib.rs"
 
 [[bin]]
-name = "backroom"
+name = "TUFFcord"
 path = "src/main.rs"
 
 # Headless test client used to check voice end to end.
 [[bin]]
-name = "backroom-bot"
+name = "tuffcord-bot"
 path = "src/bin/bot.rs"
 
 [dependencies]

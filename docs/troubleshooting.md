@@ -49,9 +49,12 @@ bug or environment problem takes more than one try to understand.
 - **Windows build: "cannot find rsbegin.o / rsend.o"** → Ubuntu's rustc ships no
   Windows startup objects; `tools/setup.sh` now builds them from
   `library/rtstartup` into its rustlib folder (first seen in the cloud environment).
+- **setup.sh: "definition of an unknown lang item: `drop_in_place`"** → a
+  rustup rustc on PATH compiled the 1.91 startup objects; setup.sh now calls
+  `/usr/lib/rust-1.91/bin/rustc` for them.
 - **`tools/wine-ui.sh start` never returns** (seen once in the cloud
   environment, window was up) → run it in the background, or start
-  `wine backroom.exe` directly with `DISPLAY=:97` and take shots with `shot`.
+  `wine TUFFcord.exe` directly with `DISPLAY=:97` and take shots with `shot`.
 - **Wine: blank screenshots** → taken before the window drew; use
   `tools/wine-ui.sh start`, which waits for it. "Can't open X server" → the
   virtual display died; `start` brings it back.

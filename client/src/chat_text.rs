@@ -6,7 +6,7 @@
 //! that room. A message that's nothing but a few emoji shows them big.
 
 use crate::theme::pal;
-use backroom::twemoji;
+use tuffcord::twemoji;
 use eframe::egui::{
     self, text::LayoutJob, Color32, FontId, Rect, Sense, TextFormat, TextureHandle, TextureOptions,
     Vec2,
@@ -95,7 +95,7 @@ pub fn show(ui: &mut egui::Ui, text: &str, cache: &mut EmojiCache) -> Option<Str
     let emoji_first = TextFormat {
         font_id: FontId::new(
             size,
-            egui::FontFamily::Name(backroom::emoji::SPACE_FONT.into()),
+            egui::FontFamily::Name(tuffcord::emoji::SPACE_FONT.into()),
         ),
         color: Color32::TRANSPARENT,
         line_height: Some(size + 2.0),
@@ -104,7 +104,7 @@ pub fn show(ui: &mut egui::Ui, text: &str, cache: &mut EmojiCache) -> Option<Str
     let emoji_rest = TextFormat {
         font_id: FontId::new(
             size,
-            egui::FontFamily::Name(backroom::emoji::ZERO_FONT.into()),
+            egui::FontFamily::Name(tuffcord::emoji::ZERO_FONT.into()),
         ),
         color: Color32::TRANSPARENT,
         line_height: Some(size + 2.0),

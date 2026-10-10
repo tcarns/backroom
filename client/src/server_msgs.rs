@@ -1,7 +1,7 @@
 //! Messages from the server: connection events and every `ServerMsg` the app handles.
 
 use crate::{App, Banner, Conn, Session};
-use backroom::net::NetEvent;
+use tuffcord::net::NetEvent;
 use eframe::egui::{self};
 use proto::{ClientMsg, ServerMsg, FEATURE_ATTACHMENTS, FEATURE_FILES};
 use std::collections::HashSet;
@@ -21,7 +21,7 @@ impl App {
                 }
                 NetEvent::Failed { message, code } => self.on_failed(message, code),
                 NetEvent::Reconnecting { reason } => {
-                    backroom::applog::warn(format!("Connection lost ({reason}); reconnecting"));
+                    tuffcord::applog::warn(format!("Connection lost ({reason}); reconnecting"));
                     if let Some(ch) = self.voice_channel.clone() {
                         self.want_voice = Some(ch);
                     }
@@ -75,9 +75,9 @@ impl App {
                 self.att.server_supports = features.iter().any(|f| f == FEATURE_ATTACHMENTS);
                 let endpoint = file_key
                     .filter(|_| features.iter().any(|f| f == FEATURE_FILES))
-                    .map(|key| backroom::files::Endpoint {
+                    .map(|key| tuffcord::files::Endpoint {
                         base: proto::files::http_base(
-                            &backroom::net::normalize_server(&self.s.server).unwrap_or_default(),
+                            &tuffcord::net::normalize_server(&self.s.server).unwrap_or_default(),
                         ),
                         key,
                     });
@@ -87,7 +87,7 @@ impl App {
                 {
                     self.att.reset_for_server();
                 }
-                backroom::applog::info(format!(
+                tuffcord::applog::info(format!(
                     "Signed in to {} as {name}. Files: {}",
                     self.s.server,
                     match &endpoint {

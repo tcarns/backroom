@@ -79,7 +79,7 @@ jobs:
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
           # Static C runtime, so the programs need no extra DLLs.
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS: -C link-arg=-static -C link-arg=-static-libgcc
-        run: cargo build --release --target x86_64-pc-windows-gnu -p backroom-server --bin backroom-server -p backroom --bin backroom
+        run: cargo build --release --target x86_64-pc-windows-gnu -p tuffcord-server --bin TUFFcord-server -p tuffcord --bin TUFFcord
 
       - name: Package
         if: steps.version.outputs.new == 'true'
@@ -87,8 +87,8 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           mkdir -p dist/TUFFcord
-          cp target/x86_64-pc-windows-gnu/release/backroom.exe dist/TUFFcord/TUFFcord.exe
-          cp target/x86_64-pc-windows-gnu/release/backroom-server.exe dist/TUFFcord/TUFFcord-server.exe
+          cp target/x86_64-pc-windows-gnu/release/TUFFcord.exe dist/TUFFcord/TUFFcord.exe
+          cp target/x86_64-pc-windows-gnu/release/TUFFcord-server.exe dist/TUFFcord/TUFFcord-server.exe
           sed 's/$/\r/' README.md > dist/TUFFcord/README.txt
           cd dist
           zip -r "TUFFcord-$TAG-windows.zip" TUFFcord

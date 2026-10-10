@@ -1,11 +1,12 @@
-"""Server self-update on Linux, through the watcher: finds a newer release on a
+"""Server self-update on Linux, through the watcher: a copy still named
+backroom-server takes its new name when started, then it finds a newer release on a
 local web server, checks and installs it, restarts (people reconnect), refuses
 a mislabeled release, and Ctrl+C stops watcher and server together."""
 import asyncio, hashlib, json, os, shutil, signal, subprocess, sys, time
 
 from lib import DIR, Server, binary, check, free_port, main, spawn, wait_port
 
-ASSET = "backroom-server"
+ASSET = "TUFFcord-server"
 
 
 def write_release(rel, port, version):
@@ -29,10 +30,11 @@ async def run():
     srv_dir, rel = os.path.join(DIR, "srv"), os.path.join(DIR, "rel")
     os.makedirs(srv_dir), os.makedirs(rel)
     exe = os.path.join(srv_dir, ASSET)
-    shutil.copy(binary("backroom-server"), exe)
+    old_exe = os.path.join(srv_dir, "backroom-server")  # as installed before the rename
+    shutil.copy(binary("TUFFcord-server"), old_exe)
     # The "new version": the same program with a few extra bytes, so it's
     # recognizably a different file once installed.
-    new = open(binary("backroom-server"), "rb").read() + b"\0new-version"
+    new = open(binary("TUFFcord-server"), "rb").read() + b"\0new-version"
     open(os.path.join(rel, ASSET), "wb").write(new)
     open(os.path.join(rel, "SHA256SUMS.txt"), "w").write(f"{hashlib.sha256(new).hexdigest()}  {ASSET}\n")
     os.chmod(os.path.join(rel, ASSET), 0o755)
@@ -49,9 +51,10 @@ async def run():
                BACKROOM_SERVER_UPDATE_ASSET=ASSET, BACKROOM_TEST_REPORT_VERSION="99.0.0",
                DATA_DIR=os.path.join(srv_dir, "data"), BACKROOM_CONFIG=os.path.join(srv_dir, "none.toml"))
     env.pop("BACKROOM_NO_WATCHER", None)
-    watcher = spawn([exe], cwd=srv_dir, env=env, stdin=subprocess.PIPE, stdout=open(out, "w"),
+    watcher = spawn([old_exe], cwd=srv_dir, env=env, stdin=subprocess.PIPE, stdout=open(out, "w"),
                     stderr=subprocess.STDOUT, text=True)
     wait_port(port)
+    check(os.path.exists(exe) and not os.path.exists(old_exe), "the old program name becomes TUFFcord-server")
     s = Server.__new__(Server)  # just for its sign-in helpers, pointed at this server
     s.port, s.group = port, "g"
     alice, w = await s.register("Alice")

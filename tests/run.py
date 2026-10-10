@@ -20,8 +20,8 @@ args = [a for a in sys.argv[1:] if not a.startswith("-")]
 flags = {a for a in sys.argv[1:] if a.startswith("-")}
 
 if "--no-build" not in flags:
-    r = subprocess.run(["cargo", "build", "--quiet", "-p", "backroom-server", "--bin", "backroom-server",
-                        "-p", "backroom", "--bin", "backroom-bot"], cwd=ROOT)
+    r = subprocess.run(["cargo", "build", "--quiet", "-p", "tuffcord-server", "--bin", "TUFFcord-server",
+                        "-p", "tuffcord", "--bin", "tuffcord-bot"], cwd=ROOT)
     if r.returncode:
         sys.exit("build failed")
 

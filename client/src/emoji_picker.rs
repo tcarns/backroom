@@ -2,7 +2,7 @@
 
 use crate::theme::{self, pal};
 use crate::{chat_text, App, RECENT};
-use backroom::emoji;
+use tuffcord::emoji;
 use eframe::egui::{
     self, Align2, CornerRadius, FontId, Frame, Key, Margin, RichText, Sense, Stroke,
 };
@@ -90,7 +90,7 @@ impl App {
                                 if selected || resp.hovered() {
                                     ui.painter().rect_filled(r, CornerRadius::same(6), if selected { pal().raised_2 } else { theme::mix(pal().raised, pal().raised_2, 0.5) });
                                 }
-                                match backroom::twemoji::name_for(icon) {
+                                match tuffcord::twemoji::name_for(icon) {
                                     Some(n) => chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, r.shrink(6.0)),
                                     None => {
                                         ui.painter().text(r.center(), Align2::CENTER_CENTER, icon, FontId::proportional(16.0), pal().muted);
@@ -135,7 +135,7 @@ impl App {
                                                 ui.painter().rect_filled(r, CornerRadius::same(6), pal().raised_2);
                                                 hovered = Some((e, name));
                                             }
-                                            if let Some(n) = backroom::twemoji::name_for(e) {
+                                            if let Some(n) = tuffcord::twemoji::name_for(e) {
                                                 chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, r.shrink(6.0));
                                             }
                                             if resp.clicked() {
@@ -160,7 +160,7 @@ impl App {
                             match hovered {
                                 Some((e, name)) => {
                                     let (r, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::hover());
-                                    if let Some(n) = backroom::twemoji::name_for(e) {
+                                    if let Some(n) = tuffcord::twemoji::name_for(e) {
                                         chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, r);
                                     }
                                     let code = emoji::code_for(e).map(|c| format!("  :{c}:")).unwrap_or_default();

@@ -2,8 +2,8 @@
 chunked, CF-Connecting-IP added): a video and an image sent by one app arrive
 intact at another.
 
-With OLD_BIN set (a folder with the previous release's backroom-server and
-backroom-bot), also checks old app + new server and new app + old server.
+With OLD_BIN set (a folder with the previous release's TUFFcord-server and
+tuffcord-bot), also checks old app + new server and new app + old server.
 """
 import json, os, struct, subprocess, sys, time, zlib
 
@@ -44,7 +44,7 @@ def pair(label, app_bin, server_bin, bundle):
     wait_port(tport)
     url = f"wss://localhost:{tport}/ws"
     env = dict(os.environ, SSL_CERT_FILE=bundle)
-    bot = lambda name, *a, seconds: [binary("backroom-bot", app_bin), "--server", url, "--password", "g",
+    bot = lambda name, *a, seconds: [binary("tuffcord-bot", app_bin), "--server", url, "--password", "g",
                                      "--name", name, "--seconds", str(seconds), *a]
     recv_out = os.path.join(s.dir, "recv.json")
     recv = spawn(bot("Recv", seconds=10), env=env, stdout=open(recv_out, "w"), stderr=subprocess.STDOUT)

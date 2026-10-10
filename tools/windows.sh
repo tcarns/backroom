@@ -18,7 +18,7 @@ export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS="-C link-arg=-static -C link-arg=-static-libgcc"
 opts=(--release --target x86_64-pc-windows-gnu -Z build-std=std,panic_abort --message-format short
-      -p backroom-server --bin backroom-server -p backroom --bin backroom)
+      -p tuffcord-server --bin TUFFcord-server -p tuffcord --bin TUFFcord)
 case "${1:-}" in
   check) cargo check "${opts[@]}" 2>&1 | grep -E "^(error|warning)|^[^ ]+:[0-9]+:[0-9]+: (error|warning)" || echo "windows check: ok" ;;
   build) cargo build "${opts[@]}" 2>&1 | grep -E "error|warning: unused" || true

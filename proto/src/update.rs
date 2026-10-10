@@ -319,6 +319,55 @@ pub fn download_verified(
     Ok(tmp)
 }
 
+/// Program names before the rename and after.
+const OLD_NAMES: [(&str, &str); 2] = [("backroom", "TUFFcord"), ("backroom-server", "TUFFcord-server")];
+
+static EXE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The running program's path: `std::env::current_exe`, except after
+/// [`adopt_new_name`] renamed it (Windows keeps reporting the old path then).
+pub fn current_exe() -> std::io::Result<PathBuf> {
+    match EXE.get() {
+        Some(p) => Ok(p.clone()),
+        None => std::env::current_exe(),
+    }
+}
+
+/// Copies from before 0.8 update themselves in place, so they keep running as
+/// `backroom.exe` / `backroom-server.exe`. Rename the running program to its
+/// TUFFcord name (Windows allows that while it runs), unless something by that
+/// name is already there. Returns the old and new paths when it renamed.
+pub fn adopt_new_name() -> Option<(PathBuf, PathBuf)> {
+    let exe = std::env::current_exe().ok()?;
+    let new = new_name(&exe)?;
+    if new.exists() {
+        return None;
+    }
+    std::fs::rename(&exe, &new).ok()?;
+    // The previous copy may still be closing: give its leftovers the new name
+    // too, so `cleanup_leftovers` finds them.
+    let old_len = exe.file_name().map_or(0, |n| n.len());
+    for p in old_copies(&exe) {
+        if let Some(suffix) = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.get(old_len..)) {
+            let _ = std::fs::rename(&p, suffixed(&new, suffix));
+        }
+    }
+    let _ = std::fs::remove_file(suffixed(&exe, ".download"));
+    let _ = EXE.set(new.clone());
+    Some((exe, new))
+}
+
+/// `…/backroom.exe` → `…/TUFFcord.exe` (any case, with or without `.exe`).
+fn new_name(exe: &Path) -> Option<PathBuf> {
+    let name = exe.file_name()?.to_str()?;
+    let stem = match name.len().checked_sub(4) {
+        Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".exe") => &name[..i],
+        _ => name,
+    };
+    let (_, new) = OLD_NAMES.iter().find(|(old, _)| old.eq_ignore_ascii_case(stem))?;
+    Some(exe.with_file_name(format!("{new}{}", &name[stem.len()..])))
+}
+
 /// Put `new_file` where `exe` is, keeping the old one as `<exe>.old` until it
 /// can be deleted. If an earlier `.old` is still running (the server's watcher
 /// keeps the first copy open), the next free `.old1`, `.old2`… is used.
@@ -389,7 +438,7 @@ pub fn remove_old_copies(exe: &Path) -> bool {
 /// Remove what an update left behind. The previous copy may still be closing,
 /// so keep trying for a few seconds (in the background).
 pub fn cleanup_leftovers() {
-    let Ok(exe) = std::env::current_exe() else {
+    let Ok(exe) = current_exe() else {
         return;
     };
     let download = suffixed(&exe, ".download");
@@ -514,5 +563,17 @@ mod tests {
         assert_eq!(parse_release(json, "0.3.0").unwrap(), None);
         let pre = json.replace(r#""prerelease":false"#, r#""prerelease":true"#);
         assert_eq!(parse_release(&pre, "0.2.0").unwrap(), None);
+    }
+
+    #[test]
+    fn old_program_names_map_to_new_ones() {
+        let d = Path::new("dir");
+        assert_eq!(new_name(&d.join("backroom.exe")), Some(d.join("TUFFcord.exe")));
+        assert_eq!(new_name(&d.join("Backroom.EXE")), Some(d.join("TUFFcord.EXE")));
+        assert_eq!(new_name(&d.join("backroom-server.exe")), Some(d.join("TUFFcord-server.exe")));
+        assert_eq!(new_name(&d.join("backroom-server")), Some(d.join("TUFFcord-server")));
+        assert_eq!(new_name(&d.join("TUFFcord.exe")), None);
+        assert_eq!(new_name(&d.join("backroom-bot")), None);
+        assert_eq!(new_name(&d.join("my-backroom.exe")), None);
     }
 }

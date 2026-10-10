@@ -9,8 +9,8 @@ use crate::attach::{self, Fetch, ImgState, Then};
 use crate::theme::{self, pal};
 use crate::volume_ui::volume_control;
 use crate::App;
-use backroom::files as xfer;
-use backroom::media::{self, Player};
+use tuffcord::files as xfer;
+use tuffcord::media::{self, Player};
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Frame, Margin, Rect, RichText, Sense, Stroke,
     TextureHandle, TextureOptions, Vec2,
@@ -18,7 +18,7 @@ use eframe::egui::{
 use proto::files::{duration_label, extension, kind_of, runs_code, size_label, Kind};
 use proto::Attachment;
 
-pub use backroom::settings::DEFAULT_MEDIA_LEVEL;
+pub use tuffcord::settings::DEFAULT_MEDIA_LEVEL;
 
 /// Something clicked or needed in the chat, done after drawing.
 pub enum Act {
@@ -49,7 +49,7 @@ pub struct Playing {
 
 impl Drop for Playing {
     fn drop(&mut self) {
-        backroom::crash::playing_stopped();
+        tuffcord::crash::playing_stopped();
     }
 }
 
@@ -814,7 +814,7 @@ impl App {
         }
         if self.s.play_outside.contains(&a.id) {
             // TUFFcord closed in the middle of playing this one before.
-            backroom::applog::info(format!("Opening {} in the system's player", a.name));
+            tuffcord::applog::info(format!("Opening {} in the system's player", a.name));
             self.open_now(&path, &a.name);
             return;
         }
@@ -825,11 +825,11 @@ impl App {
         } else {
             [0, 0]
         };
-        backroom::applog::info(format!("Playing {} ({}) in the chat", a.name, a.mime));
+        tuffcord::applog::info(format!("Playing {} ({}) in the chat", a.name, a.mime));
         let gpu = self.s.video_gpu;
         match Player::open(&path, size, self.s.media_level, gpu, self.wake.clone()) {
             Ok(player) => {
-                backroom::crash::playing_started(backroom::crash::Playback {
+                tuffcord::crash::playing_started(tuffcord::crash::Playback {
                     id: a.id.clone(),
                     name: a.name.clone(),
                     gpu,
@@ -872,7 +872,7 @@ impl App {
         }
         if p.failed.is_none() {
             if let Some(e) = p.player.status().error {
-                backroom::applog::warn(format!("Playing {} failed: {e}", p.id));
+                tuffcord::applog::warn(format!("Playing {} failed: {e}", p.id));
                 p.failed = Some(e);
             }
         }
