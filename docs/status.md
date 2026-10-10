@@ -35,6 +35,19 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 - Watch the first self-update on the VPS (journal should show the restart).
 - Optional, later: HTTPS built into the server (drops Caddy, ~30 MB).
 
+## In 0.9.3 (owner confirmed all three on his PC, 2026-10-10)
+- Video previews (`client/src/posters.rs`, `media::is_dark`): the sender's
+  probe skips near-black frames; a received poster that is near-black,
+  missing or unfetchable is replaced by a frame taken from the cached clip
+  (one job at a time, saved as `<id>.jpg` in the cache, retried when the
+  clip's download ends). Big clips that aren't preloaded stay black until
+  played. Failures are logged ("No preview frame ...").
+- Middle-click auto scroll (`client/src/autoscroll.rs`): stops on any click,
+  Esc, middle again or a channel change; off when push-to-talk is the middle
+  button; stick-to-bottom is off while it runs.
+- Mute, deafen, settings: `widgets::bar_button`, a highlight mixed from the
+  bar color that fades in, so it shows in light themes too.
+
 ## In 0.9.2
 - Sidebar and member list widths: drag the edge between them and the chat
   (`widgets::panel_edge`, called last in `main_screen` so it wins the hit
