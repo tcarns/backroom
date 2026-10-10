@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-/// Starting volume for videos and audio in the chat (a fifth of 0.7's 0.8).
-pub const DEFAULT_MEDIA_LEVEL: f32 = 0.16;
+/// Starting volume for videos and audio in the chat, until changed in Settings.
+pub const DEFAULT_MEDIA_LEVEL: f32 = 0.5;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -43,10 +43,15 @@ pub struct Settings {
     pub theme: String,
     /// The member list on the right is open.
     pub show_members: bool,
-    /// Volume for videos and audio played in the chat (0.0 to 1.0). Called
-    /// `media_volume` before 0.8, which started louder; that old value is left
-    /// behind on purpose so everyone starts at the new, quieter default.
+    /// Volume of the video or audio clip playing in the chat (0.0 to 1.0).
+    /// Not saved: every clip starts at `media_default`. (Saved as
+    /// `media_volume` before 0.8 and `media_level` before 0.8.6; both are
+    /// left behind so everyone starts at the new default.)
+    #[serde(skip)]
     pub media_level: f32,
+    /// The volume each video or audio clip starts at ("Default video and audio
+    /// volume" in Settings). New in 0.8.6, so everyone starts at 50%.
+    pub media_default: f32,
     /// Emoji picked recently, newest first.
     pub recent_emoji: Vec<String>,
     /// Let the graphics card decode videos. Turned off by itself if the app
@@ -85,6 +90,7 @@ impl Default for Settings {
             theme: "plum".into(),
             show_members: true,
             media_level: DEFAULT_MEDIA_LEVEL,
+            media_default: DEFAULT_MEDIA_LEVEL,
             recent_emoji: Vec::new(),
             video_gpu: true,
             play_outside: Vec::new(),
@@ -175,6 +181,8 @@ impl Settings {
                 s.save();
             }
         }
+        s.media_default = s.media_default.clamp(0.0, 1.0);
+        s.media_level = s.media_default;
         s
     }
 
@@ -214,6 +222,17 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_default_starts_at_half() {
+        // A 0.8.5 settings file: its saved clip volume is left behind.
+        let s: Settings = serde_json::from_str(r#"{"name":"Tyler","media_level":0.16}"#).unwrap();
+        assert_eq!(s.media_default, 0.5);
+        assert_eq!(s.media_level, DEFAULT_MEDIA_LEVEL);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"media_default\""));
+        assert!(!json.contains("media_level"));
+    }
 
     #[test]
     fn old_folder_moves_once() {

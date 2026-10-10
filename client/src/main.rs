@@ -299,6 +299,8 @@ struct App {
     focus_composer: bool,
     banner: Option<Banner>,
     settings_open: bool,
+    /// The category shown in the settings window.
+    settings_page: settings_window::SettingsPage,
     pop: Option<VolumePop>,
     capturing: bool,
     mem_mb: Option<f64>,
@@ -386,6 +388,7 @@ impl App {
             focus_composer: false,
             banner: None,
             settings_open: false,
+            settings_page: Default::default(),
             pop: None,
             capturing: false,
             mem_mb: None,

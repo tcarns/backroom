@@ -2,7 +2,7 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.8.5 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.8.6 (app and server).
 
 ## Waiting on the owner
 - Nothing open. The video freeze (0.8.2: app and Windows volume mixer hung a
@@ -19,6 +19,14 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   `.exe` builds work there since `tools/setup.sh` builds Rust's missing Windows
   startup objects (2026-10-10); the app runs under Wine, audio plays.
 - `tools/setup.sh` only before building or testing (~5 min bare, all passing).
+
+## In 0.8.6
+- Settings window: categories on the left (`SettingsPage` in
+  `settings_window.rs`), the chosen page on the right at a fixed height.
+- `media_default` (Settings, 50% for everyone) is the volume each clip opens
+  at; `media_level` is now the playing clip's volume only and isn't saved.
+- "Play videos here again" always shown, disabled when `play_outside` is
+  empty, with a tooltip. Checked under Wine (all four pages, tooltip).
 
 ## In 0.8.5
 - One-time reset of `video_gpu` / `play_outside` (settings.rs `load`), Settings

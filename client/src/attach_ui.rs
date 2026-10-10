@@ -746,6 +746,8 @@ impl App {
                     } else {
                         let back = if self.unmute_level > 0.001 {
                             self.unmute_level
+                        } else if self.s.media_default > 0.001 {
+                            self.s.media_default
                         } else {
                             DEFAULT_MEDIA_LEVEL
                         };
@@ -777,13 +779,13 @@ impl App {
         }
     }
 
+    /// Volume of the clip playing now (not saved: the next one starts at the default).
     fn set_media_level(&mut self, v: f32) {
         let v = v.clamp(0.0, 1.0);
         self.s.media_level = v;
         if let Some(p) = &self.player {
             p.player.set_volume(v);
         }
-        self.settings_dirty = true;
     }
 
     /// Download if needed, then open with the system's program.
@@ -827,6 +829,8 @@ impl App {
         };
         tuffcord::applog::info(format!("Playing {} ({}) in the chat", a.name, a.mime));
         let gpu = self.s.video_gpu;
+        // Every clip starts at the default volume from Settings.
+        self.s.media_level = self.s.media_default;
         match Player::open(&path, size, self.s.media_level, gpu, self.wake.clone()) {
             Ok(player) => {
                 tuffcord::crash::playing_started(tuffcord::crash::Playback {

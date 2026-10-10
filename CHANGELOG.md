@@ -2,6 +2,12 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.6
+
+- Settings is split into categories down the left side: Voice and audio, Appearance and videos, Account, and Updates and about. Click one to see its settings.
+- New "Default video and audio volume" setting (under Voice and audio), set to 50%. Every video or audio file in the chat starts at that volume; the speaker button on a player changes the volume of that one only.
+- "Play videos here again" is always shown now (greyed out when there's nothing to undo). Hover it to see what it does.
+
 ## 0.8.5
 
 - Videos that froze the app before 0.8.3 play in the chat again instead of opening in your video player, and the graphics card is used for videos again. Both were turned on by the freeze, not by a real problem with the video.
