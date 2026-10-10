@@ -71,7 +71,7 @@ fn has_transparency(img: &DynamicImage) -> bool {
 /// transparency). GIFs are kept as-is when they fit, so animations survive.
 pub fn prepare(bytes: Vec<u8>, name: &str, max_bytes: u64) -> Result<Prepared, String> {
     let format = image::guess_format(&bytes).map_err(|_| {
-        "That file isn't an image Backroom can send (PNG, JPEG, GIF, WebP or BMP).".to_string()
+        "That file isn't an image TUFFcord can send (PNG, JPEG, GIF, WebP or BMP).".to_string()
     })?;
     let img = image::load_from_memory_with_format(&bytes, format)
         .map_err(|e| format!("Couldn't read that image ({e})."))?;
@@ -212,7 +212,7 @@ pub fn decode_gif(
 /// Save an image to a temporary file and open it in the default photo viewer
 /// (older servers, where the bytes came over the WebSocket).
 pub fn open_externally(id: &str, name: &str, bytes: &[u8]) -> Result<(), String> {
-    let dir = std::env::temp_dir().join("Backroom");
+    let dir = std::env::temp_dir().join("TUFFcord");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let safe: String = name
         .chars()

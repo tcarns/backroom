@@ -1,4 +1,4 @@
-//! Backroom server: relays voice between people in the same voice channel,
+//! TUFFcord server: relays voice between people in the same voice channel,
 //! keeps text chat history, and logs what happens.
 //!
 //! One WebSocket per person carries JSON control messages and binary Opus voice frames.
@@ -228,7 +228,7 @@ impl State {
         let mut names: Vec<&str> = users.iter().map(|c| c.name.as_str()).collect();
         names.sort_unstable();
         let mut out = format!(
-            "Backroom server {} | up {} | log level {} | memory {mem}\nOnline ({}): {}",
+            "TUFFcord server {} | up {} | log level {} | memory {mem}\nOnline ({}): {}",
             proto::update::CURRENT,
             duration(self.started.elapsed()),
             log::level().name(),
@@ -341,6 +341,10 @@ fn handle_text(shared: &Shared, id: u32, text: &str) -> Option<ClientMsg> {
             text,
             files: list,
         } => files::post(&mut st, id, &channel, &text, list),
+        ClientMsg::DeleteMessage {
+            channel,
+            id: msg_id,
+        } => delete_message(&mut st, id, &channel, &msg_id),
     }
     None
 }
@@ -623,7 +627,7 @@ async fn handle_connection(mut stream: TcpStream, addr: SocketAddr, shared: Shar
     let Some(key) = req.header("sec-websocket-key") else {
         debug!(
             "conn",
-            "Connection from {ip} wasn't a Backroom app (no WebSocket key)"
+            "Connection from {ip} wasn't a TUFFcord app (no WebSocket key)"
         );
         return;
     };
@@ -849,6 +853,70 @@ fn post_message(st: &mut State, message: ChatMessage) {
         }
     }
     st.broadcast(&ServerMsg::Chat { message });
+}
+
+/// An admin deletes a message: gone from history for everyone, files and all.
+fn delete_message(st: &mut State, conn: u32, channel: &str, msg_id: &str) {
+    let by = st.who(conn);
+    // Check the account, not the connection: admin may have just been removed.
+    let admin = st
+        .clients
+        .get(&conn)
+        .and_then(|c| c.account)
+        .and_then(|a| st.accounts.get(a))
+        .is_some_and(|a| a.admin);
+    if !admin {
+        warn!("admin", "{by} tried to delete a message but isn't an admin");
+        st.send(
+            conn,
+            &ServerMsg::Error {
+                code: "not_admin".into(),
+                message: "Only admins can delete messages.".into(),
+            },
+        );
+        return;
+    }
+    let Some(list) = st.history.get_mut(channel) else {
+        return;
+    };
+    let Some(pos) = list.iter().position(|m| m.id == msg_id) else {
+        // Already gone (someone else deleted it, or it aged out): make sure the app forgets it too.
+        st.send(
+            conn,
+            &ServerMsg::MessageDeleted {
+                channel: channel.to_string(),
+                id: msg_id.to_string(),
+            },
+        );
+        return;
+    };
+    let message = list.remove(pos);
+    st.history_dirty = true;
+    let dir = attachments_dir(&st.cfg);
+    let mut files_removed = 0;
+    for a in &message.attachments {
+        for id in std::iter::once(&a.id).chain(a.poster.as_ref().map(|p| &p.id)) {
+            let freed = files::remove_file(&dir, id);
+            if freed > 0 {
+                files_removed += 1;
+            }
+            st.files.stored = st.files.stored.saturating_sub(freed);
+        }
+    }
+    warn!(
+        "admin",
+        "{by} deleted a message by {} in #{channel}{}",
+        message.author,
+        if files_removed > 0 {
+            format!(" ({files_removed} file(s) removed)")
+        } else {
+            String::new()
+        }
+    );
+    st.broadcast(&ServerMsg::MessageDeleted {
+        channel: channel.to_string(),
+        id: msg_id.to_string(),
+    });
 }
 
 fn attachments_dir(cfg: &Config) -> PathBuf {
@@ -1185,7 +1253,7 @@ async fn restart_for_update(shared: &Shared, version: String) -> ! {
     if !selfupdate::supervised() {
         warn!(
             "update",
-            "Backroom server {version} is installed. Start the server again to use it."
+            "TUFFcord server {version} is installed. Start the server again to use it."
         );
     }
     std::process::exit(selfupdate::RESTART_CODE);
@@ -1270,7 +1338,7 @@ async fn run(cfg: Arc<Config>) {
             if e.kind() == std::io::ErrorKind::AddrInUse {
                 critical!(
                     "server",
-                    "Port {} is already in use. Is Backroom already running in another window?",
+                    "Port {} is already in use. Is TUFFcord already running in another window?",
                     cfg.port
                 );
             } else {
@@ -1328,11 +1396,11 @@ async fn run(cfg: Arc<Config>) {
                 st.pending_update = Some(version.clone());
                 st.restart_now |= now;
                 if now {
-                    info!("update", "Backroom server {version} is installed");
+                    info!("update", "TUFFcord server {version} is installed");
                 } else {
                     info!(
                         "update",
-                        "Backroom server {version} is installed. The server will restart to use it once nobody is in voice (type \"update\" to restart now)."
+                        "TUFFcord server {version} is installed. The server will restart to use it once nobody is in voice (type \"update\" to restart now)."
                     );
                 }
             }),

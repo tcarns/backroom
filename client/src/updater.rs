@@ -24,9 +24,10 @@ pub enum Phase {
     Failed(String),
 }
 
-/// The release file this build updates itself from.
+/// The release file this build updates itself from. (Releases also carry a
+/// copy named `backroom.exe`, for apps from before the rename.)
 pub fn asset_name() -> String {
-    std::env::var("BACKROOM_UPDATE_ASSET").unwrap_or_else(|_| "backroom.exe".into())
+    std::env::var("BACKROOM_UPDATE_ASSET").unwrap_or_else(|_| "TUFFcord.exe".into())
 }
 
 /// In-app updating is for the Windows app (other builds can opt in for testing).

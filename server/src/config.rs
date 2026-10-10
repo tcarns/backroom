@@ -1,4 +1,5 @@
-//! Server settings: read from `backroom-server.toml` (created on first run),
+//! Server settings: read from `TUFFcord-server.toml` (created on first run;
+//! `backroom-server.toml` before the rename, which is renamed on first start),
 //! with environment variables overriding the file.
 
 use crate::log::Level;
@@ -73,7 +74,7 @@ pub fn random_password() -> String {
 
 fn default_file(password: &str) -> String {
     format!(
-        r#"# Backroom server settings. Restart the server after changing anything here.
+        r#"# TUFFcord server settings. Restart the server after changing anything here.
 
 # Group password: people need it once, to create their account. After that they
 # sign in with their own name and password. Leave it empty ("") to let anyone with
@@ -84,7 +85,7 @@ password = "{password}"
 allow_signup = true
 
 port = 3000
-app_name = "Backroom"
+app_name = "TUFFcord"
 text_channels = ["general", "links", "memes"]
 voice_channels = ["Lounge", "Gaming", "Quiet room"]
 max_per_voice_channel = 8
@@ -105,9 +106,9 @@ max_storage_mb = 5120
 log_level = "info"
 
 # Set to "" to log only to this window.
-log_file = "data/backroom.log"
+log_file = "data/TUFFcord.log"
 
-# Check GitHub for a newer Backroom.
+# Check GitHub for a newer TUFFcord.
 check_updates = true
 
 # Install new versions by itself, then restart once nobody is in voice (people
@@ -115,6 +116,66 @@ check_updates = true
 auto_update = true
 "#
     )
+}
+
+/// `TUFFcord-server.toml` next to the server. Backroom (before 0.8) called it
+/// `backroom-server.toml`; that one is renamed the first time.
+fn settings_file(base: &Path, notes: &mut Vec<(Level, String)>) -> PathBuf {
+    let new = base.join("TUFFcord-server.toml");
+    let old = base.join("backroom-server.toml");
+    if new.exists() || !old.exists() {
+        return new;
+    }
+    match std::fs::rename(&old, &new) {
+        Ok(()) => {
+            notes.push((
+                Level::Info,
+                format!("Renamed backroom-server.toml to {} (Backroom is now TUFFcord).", new.display()),
+            ));
+            new
+        }
+        Err(e) => {
+            notes.push((
+                Level::Warn,
+                format!("Couldn't rename backroom-server.toml to TUFFcord-server.toml ({e}); still using the old name."),
+            ));
+            old
+        }
+    }
+}
+
+/// Settings files from before the rename call the app Backroom. Lines still at
+/// their old default switch to TUFFcord; a name someone chose is left alone.
+/// (The log file keeps its old name so the log carries on in one place.)
+fn rename_in_file(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let mut new = text.clone();
+    for (old_line, new_line) in [
+        ("app_name = \"Backroom\"", "app_name = \"TUFFcord\""),
+        ("# Backroom server settings.", "# TUFFcord server settings."),
+        ("# Check GitHub for a newer Backroom.", "# Check GitHub for a newer TUFFcord."),
+    ] {
+        new = new
+            .split_inclusive('\n')
+            .map(|line| {
+                if line.trim_end_matches(['\r', '\n']).starts_with(old_line) {
+                    line.replacen(old_line, new_line, 1)
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect();
+    }
+    if new == text {
+        return None;
+    }
+    let renamed_app = !text.contains("app_name = \"TUFFcord\"") && new.contains("app_name = \"TUFFcord\"");
+    std::fs::write(path, new).ok()?;
+    Some(if renamed_app {
+        format!("Updated {}: app_name is now \"TUFFcord\" (it was the old default, \"Backroom\").", path.display())
+    } else {
+        format!("Updated the comments in {} for the new name.", path.display())
+    })
 }
 
 /// Settings files written by 0.6.0 and earlier say images are limited to 8 MB.
@@ -180,12 +241,16 @@ fn list(s: &str) -> Vec<String> {
 pub fn load() -> Config {
     let mut notes = Vec::new();
     let base = base_dir();
-    let config_path = std::env::var_os("BACKROOM_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| base.join("backroom-server.toml"));
+    let config_path = match std::env::var_os("BACKROOM_CONFIG") {
+        Some(p) => PathBuf::from(p),
+        None => settings_file(&base, &mut notes),
+    };
 
     let mut file = FileConfig::default();
     if let Some(note) = upgrade_file(&config_path) {
+        notes.push((Level::Info, note));
+    }
+    if let Some(note) = rename_in_file(&config_path) {
         notes.push((Level::Info, note));
     }
     if config_path.exists() {
@@ -243,7 +308,7 @@ pub fn load() -> Config {
     let password = env("PASSWORD").or(file.password).unwrap_or_default();
     let app_name = env("APP_NAME")
         .or(file.app_name)
-        .unwrap_or_else(|| "Backroom".into());
+        .unwrap_or_else(|| "TUFFcord".into());
     let mut text_channels: Vec<String> = env("TEXT_CHANNELS")
         .map(|s| list(&s))
         .or(file.text_channels)
@@ -308,7 +373,7 @@ pub fn load() -> Config {
             None
         }
         Some(s) => Some(resolve(s)),
-        None => Some(data_dir.join("backroom.log")),
+        None => Some(data_dir.join("TUFFcord.log")),
     };
 
     let check_updates = match env("CHECK_UPDATES") {
@@ -367,7 +432,7 @@ mod tests {
     fn upgrades_untouched_old_settings_only() {
         let dir = std::env::temp_dir().join(format!("br-cfg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("backroom-server.toml");
+        let path = dir.join("TUFFcord-server.toml");
         let new = default_file("pw");
         let old = new.replace(NEW_ATTACHMENT_BLOCK, OLD_ATTACHMENT_BLOCK);
         assert_ne!(old, new);
@@ -394,6 +459,42 @@ mod tests {
         std::fs::write(&path, &custom).unwrap();
         assert!(upgrade_file(&path).is_none());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), custom);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn old_settings_file_is_renamed_and_its_default_name_updated() {
+        let dir = std::env::temp_dir().join(format!("tuff-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old_text = default_file("secret")
+            .replace("data/TUFFcord.log", "data/backroom.log")
+            .replace("TUFFcord", "Backroom")
+            .replace('\n', "\r\n");
+        std::fs::write(dir.join("backroom-server.toml"), &old_text).unwrap();
+        let mut notes = Vec::new();
+        let path = settings_file(&dir, &mut notes);
+        assert_eq!(path, dir.join("TUFFcord-server.toml"));
+        assert!(!dir.join("backroom-server.toml").exists());
+        assert!(rename_in_file(&path).unwrap().contains("app_name"));
+        let got = std::fs::read_to_string(&path).unwrap();
+        assert!(got.contains("app_name = \"TUFFcord\"\r\n"));
+        assert!(got.starts_with("# TUFFcord server settings."));
+        assert!(got.contains("# Check GitHub for a newer TUFFcord.\r\n"));
+        assert!(got.contains("password = \"secret\""));
+        assert!(got.contains("log_file = \"data/backroom.log\""), "log keeps its place");
+        assert_eq!(got.matches("Backroom").count(), 0);
+        let parsed: FileConfig = toml::from_str(&got).unwrap();
+        assert_eq!(parsed.app_name.as_deref(), Some("TUFFcord"));
+        assert!(rename_in_file(&path).is_none(), "only once");
+
+        // A name someone chose stays.
+        std::fs::write(&path, "app_name = \"Backroom Crew\"\npassword = \"x\"\n").unwrap();
+        assert!(rename_in_file(&path).is_none());
+        // Both files there: the new one wins, the old one is left alone.
+        std::fs::write(dir.join("backroom-server.toml"), "x").unwrap();
+        assert_eq!(settings_file(&dir, &mut notes), path);
+        assert!(dir.join("backroom-server.toml").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

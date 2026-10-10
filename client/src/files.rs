@@ -43,7 +43,7 @@ fn agent() -> ureq::Agent {
 }
 
 fn user_agent() -> String {
-    format!("Backroom/{}", proto::update::CURRENT)
+    format!("TUFFcord/{}", proto::update::CURRENT)
 }
 
 /// Turn an error answer into a sentence (and log exactly what came back).
@@ -335,11 +335,11 @@ fn download_inner(
 
 // ---------------------------------------------------------------- cache
 
-/// Where downloaded files are kept: %LOCALAPPDATA%\Backroom\cache on Windows.
+/// Where downloaded files are kept: %LOCALAPPDATA%\TUFFcord\cache on Windows.
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
-        .join("Backroom")
+        .join("TUFFcord")
         .join("cache")
 }
 
@@ -413,7 +413,7 @@ pub fn mark_downloaded(path: &Path) {
 /// Copy a cached file to a temporary folder under its real name and open it
 /// with the program Windows uses for that kind of file.
 pub fn open_with_system(cached: &Path, name: &str) -> Result<(), String> {
-    let dir = std::env::temp_dir().join("Backroom");
+    let dir = std::env::temp_dir().join("TUFFcord");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let target = dir.join(proto::files::clean_name(name));
     std::fs::copy(cached, &target).map_err(|e| e.to_string())?;

@@ -68,7 +68,7 @@ pub fn kind_of(mime: &str) -> Kind {
 }
 
 /// What a file really is, judged by its first bytes (never by its name), for
-/// the types Backroom can show or play. Everything else is a plain file.
+/// the types TUFFcord can show or play. Everything else is a plain file.
 pub fn sniff(head: &[u8]) -> &'static str {
     if let Some(img) = crate::sniff_image(head) {
         return img;

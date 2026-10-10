@@ -333,7 +333,7 @@ pub async fn hello(
             st.refuse(
                 conn,
                 "bad_version",
-                "Your Backroom app is a different version than the server. Get the latest one.",
+                "Your TUFFcord app is a different version than the server. Get the latest one.",
                 false,
             );
             return;
@@ -562,7 +562,7 @@ async fn legacy(
             st.refuse(conn, "account_required", "This server now has accounts. Create yours below with the group password, or sign in if you already have one.", false);
         } else if found.is_some() {
             // Older apps treat "bad_password" as final and stop retrying.
-            st.refuse(conn, "bad_password", "This server now has accounts, and that name has one. Get the new Backroom with the link below, then sign in.", false);
+            st.refuse(conn, "bad_password", "This server now has accounts, and that name has one. Get the new TUFFcord with the link below, then sign in.", false);
         } else if st.accounts.ip_banned(ip) {
             st.refuse(
                 conn,

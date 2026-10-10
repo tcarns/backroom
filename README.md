@@ -1,11 +1,13 @@
-# Backroom
+# TUFFcord
 
-**Download:** https://github.com/tcarns/backroom/releases/latest. Get the `Backroom-…-windows.zip` file under "Assets".
+**Download:** https://github.com/tcarns/TUFFcord/releases/latest. Get the `TUFFcord-…-windows.zip` file under "Assets".
 
 Voice and text chat for your group, written in Rust. Two programs:
 
-- **backroom.exe**: the app. Everyone runs this.
-- **backroom-server.exe**: the server. Only the person hosting runs this.
+- **TUFFcord.exe**: the app. Everyone runs this.
+- **TUFFcord-server.exe**: the server. Only the person hosting runs this.
+
+TUFFcord was called Backroom before 0.8.0. Copies that update themselves keep their old file names (`backroom.exe`, `backroom-server.exe`), and that's fine: shortcuts keep working. Settings, sign-ins, chat history and accounts carry over; `backroom-server.toml` is renamed to `TUFFcord-server.toml`, and the app's `%APPDATA%\Backroom` folder becomes `%APPDATA%\TUFFcord`.
 
 Voice goes through the server: each person sends their audio once and the server passes it on to everyone else in the channel. Nobody's router can block a direct connection, because there aren't any.
 
@@ -13,9 +15,9 @@ This version doesn't work with the old browser version. Everyone needs the app.
 
 ## Hosting the server
 
-1. Put `backroom-server.exe` in a folder of its own. It saves its settings, chat history and logs next to itself.
-2. Double-click it. The first time, it creates `backroom-server.toml` with a random group password and shows that password in the window. People need it once, to create their account. To change it, edit that file and restart the server.
-3. Keep the window open while people are using Backroom. If Windows asks whether to allow network access, allowing it on private networks is fine. Task Manager shows two `backroom-server.exe` entries: a tiny watcher and the server itself (see Updates). That's normal.
+1. Put `TUFFcord-server.exe` in a folder of its own. It saves its settings, chat history and logs next to itself.
+2. Double-click it. The first time, it creates `TUFFcord-server.toml` with a random group password and shows that password in the window. People need it once, to create their account. To change it, edit that file and restart the server.
+3. Keep the window open while people are using TUFFcord. If Windows asks whether to allow network access, allowing it on private networks is fine. Task Manager shows two `TUFFcord-server.exe` entries: a tiny watcher and the server itself (see Updates). That's normal.
 4. To let friends connect from outside your home, start a Cloudflare tunnel in PowerShell, the same as before:
    ```powershell
    cloudflared tunnel --url http://localhost:3000
@@ -25,11 +27,11 @@ This version doesn't work with the old browser version. Everyone needs the app.
 
 ## Joining
 
-1. Run `backroom.exe`. The first time, Windows may say "Windows protected your PC", because the app isn't signed. Click **More info**, then **Run anyway**.
+1. Run `TUFFcord.exe`. The first time, Windows may say "Windows protected your PC", because the app isn't signed. Click **More info**, then **Run anyway**.
 2. **Server address:** the `….trycloudflare.com` address (with or without `https://`). If you're on the computer running the server, `localhost:3000` also works.
-3. The first time, choose **Create account**: pick a name and a password of your own, and enter the group password. After that, use **Sign in** with your name and password. With "Keep me signed in" checked, Backroom signs you in by itself next time.
+3. The first time, choose **Create account**: pick a name and a password of your own, and enter the group password. After that, use **Sign in** with your name and password. With "Keep me signed in" checked, TUFFcord signs you in by itself next time.
 
-If you used Backroom before accounts (0.5.0 or earlier), the app opens on **Create account** with your name and the group password already filled in. Just pick a password.
+If you used the app before accounts (0.5.0 or earlier), the app opens on **Create account** with your name and the group password already filled in. Just pick a password.
 
 Headphones are recommended. There's no echo cancellation yet, so speakers can feed other people's voices back into your mic.
 
@@ -48,11 +50,11 @@ Headphones are recommended. There's no echo cancellation yet, so speakers can fe
   You can attach up to 10 at once and add a caption. Any kind of file works, up to 100 MB each (the server can change that). How they show up:
   - **Images** appear in the chat. Big photos are shrunk to 2048 pixels before sending. Click one to see it full size.
   - **GIFs** play in the chat.
-  - **Videos** (MP4, MOV, WebM, MKV and more) show a preview frame and their length. Click to play right in the chat; pause, skip by clicking the bar, and change the volume with the speaker button (click to mute, scroll to adjust). The ↗ button opens it in your usual video player. If a video can't play inside Backroom, it says so and offers your player instead.
-  - **Audio** (MP3, WAV, OGG, FLAC, M4A…) gets a player with a seek bar.
+  - **Videos** (MP4, MOV, WebM, MKV and more) show a preview frame and their length. Click to play right in the chat; pause, skip by clicking the bar, and set the volume with the slider next to the speaker (click the speaker to mute, or scroll over either to adjust). Videos and audio start quiet (16%) and remember the volume you pick. The ↗ button opens it in your usual video player. If a video can't play inside TUFFcord, it says so and offers your player instead.
+  - **Audio** (MP3, WAV, OGG, FLAC, M4A…) gets a player with a seek bar and the same volume slider.
   - **Anything else** shows its name and size, with **Open** and **Save**. Opening a program or script (.exe, .bat, .ps1…) asks first, and Windows shows its usual warning, the same as for a download from a browser.
 
-  Right-click an image, video or audio file for **Save as…**. Videos and audio play with Windows' own decoders (the ones Films & TV and Media Player use), on the graphics card when there is one. WebM needs Microsoft's VP9 extension, which most Windows 10 and 11 PCs already have. Files you open or play are kept in `%LOCALAPPDATA%\Backroom\cache` (up to 2 GB, oldest removed first).
+  Right-click an image, video or audio file for **Save as…**. Videos and audio play with Windows' own decoders (the ones Films & TV and Media Player use), on the graphics card when there is one. WebM needs Microsoft's VP9 extension, which most Windows 10 and 11 PCs already have. Files you open or play are kept in `%LOCALAPPDATA%\TUFFcord\cache` (up to 2 GB, oldest removed first).
 - **Settings** (the sliders button):
   - **Mic and speakers:** pick devices and use the mic meter to test your microphone.
   - **When to send your voice:**
@@ -61,9 +63,9 @@ Headphones are recommended. There's no echo cancellation yet, so speakers can fe
   - **Noise suppression:** removes background noise like fans and keyboard clicks.
   - **Join, leave and message sounds:** turn the chimes on or off.
   - **Theme:** Plum, Midnight, Light, Cream, Pastel pink or Mint. Every theme is checked for readable contrast.
-  - **Memory:** shows how much memory Backroom is using.
+  - **Memory:** shows how much memory TUFFcord is using.
 
-The app's settings are saved in `%APPDATA%\Backroom\settings.json`.
+The app's settings are saved in `%APPDATA%\TUFFcord\settings.json`.
 
 ## Accounts
 
@@ -78,6 +80,7 @@ Everyone has their own account: a name nobody else can take, and their own passw
 - **Ban** disconnects them and stops them signing in. They also can't create a new account from the same internet address.
 - **Reset password** signs them out everywhere and gives you a temporary password to send them. They choose a new one when they sign in.
 - There's always at least one admin, and admins can't be banned until their admin is removed.
+- **Delete a message:** hold Shift and point at it. A trash can appears at its top right; click it, then confirm with **Delete** (or Enter). It's removed for everyone, with any files attached to it, and the server log notes who deleted whose message. Only admins see the trash can, and the server refuses anyone else.
 
 The same things work from the server window: `users`, `admin <name>`, `unadmin <name>`, `kick <name>`, `ban <name>`, `unban <name>`, `resetpw <name>` and `deluser <name>`. Deleting an account frees its name. Someone who forgets their password: `resetpw <name>`.
 
@@ -87,14 +90,14 @@ Ten wrong passwords from one address in ten minutes make it wait. Wrong password
 
 ## Server settings
 
-Edit `backroom-server.toml` next to the server, then restart it:
+Edit `TUFFcord-server.toml` next to the server, then restart it:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `password` | random | Group password, needed to create an account. `""` lets anyone with the address create one. |
 | `allow_signup` | `true` | `false` stops new accounts being created |
 | `port` | `3000` | Port to listen on |
-| `app_name` | `Backroom` | Name shown in the app |
+| `app_name` | `TUFFcord` | Name shown in the app. A settings file from before the rename that still said `Backroom` is switched to `TUFFcord` once. |
 | `text_channels` | `["general", "links", "memes"]` | Text channels |
 | `voice_channels` | `["Lounge", "Gaming", "Quiet room"]` | Voice channels |
 | `max_per_voice_channel` | `8` | Most people in one voice channel |
@@ -102,7 +105,7 @@ Edit `backroom-server.toml` next to the server, then restart it:
 | `max_attachment_mb` | `100` | Largest file people can send, in MB |
 | `max_storage_mb` | `5120` | Most space all sent files may use together. When it's full, the oldest files are deleted (their messages stay, marked as cleared). |
 | `log_level` | `info` | How much to log |
-| `log_file` | `data/backroom.log` | Log file. `""` logs to the window only. |
+| `log_file` | `data/TUFFcord.log` | Log file. `""` logs to the window only. Servers set up before the rename keep `data/backroom.log`. |
 | `check_updates` | `true` | Check GitHub for a new version every 6 hours |
 | `auto_update` | `true` | Install new versions by itself (see Updates). `false` only tells you, and you type `update` to install. |
 
@@ -112,15 +115,15 @@ Files are saved in `data\attachments`. They're deleted automatically when their 
 
 Files travel over plain HTTP on the server's port, separately from voice, so a big upload or download never makes anyone's voice stutter. The Cloudflare tunnel carries both, with nothing to set up.
 
-**Mixing versions:** with a 0.7.0 server, 0.6.0 apps still work but only show images (other files say they aren't available), and a 0.7.0 app on a 0.6.0 server can only send images. A server with accounts (0.6.0 and later) needs apps from 0.6.0 on. Older apps are told to close, reopen and click **Update now**. Apps from 0.6.0 still work with older servers, signing in with the group password. Between 0.2.0 and 0.5.0, any app works with any server. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out), and a 0.2.0 app on a 0.3.0 server shows messages without their images.
+**Mixing versions:** 0.7 apps and servers work with 0.8 ones. A message an admin deletes disappears from 0.7 apps the next time they connect, rather than straight away, and only 0.8 apps show the trash can. With a 0.7.0 server, 0.6.0 apps still work but only show images (other files say they aren't available), and a 0.7.0 app on a 0.6.0 server can only send images. A server with accounts (0.6.0 and later) needs apps from 0.6.0 on. Older apps are told to close, reopen and click **Update now**. Apps from 0.6.0 still work with older servers, signing in with the group password. Between 0.2.0 and 0.5.0, any app works with any server. A 0.3.0 app on a 0.2.0 server can't send images (the + button is greyed out), and a 0.2.0 app on a 0.3.0 server shows messages without their images.
 
-**Keeping your old chat history:** the history format is the same as the browser version's. Copy the old `data\messages.json` into the `data` folder next to `backroom-server.exe` before starting it.
+**Keeping your old chat history:** the history format is the same as the browser version's. Copy the old `data\messages.json` into the `data` folder next to `TUFFcord-server.exe` before starting it.
 
 ## Logging
 
-**Server:** everything is logged to the server window and to `data\backroom.log` next to `backroom-server.exe`. When the log file passes 5 MB, it's renamed to `backroom.log.1` and a fresh one starts.
+**Server:** everything is logged to the server window and to the `log_file` (`data\TUFFcord.log`, or `data\backroom.log` on servers set up before the rename) next to `TUFFcord-server.exe`. When the log file passes 5 MB, it's renamed with `.1` on the end and a fresh one starts.
 
-**App:** each person's app keeps its own log in `%APPDATA%\Backroom\backroom.log` (Settings → **Open log file**): sign-ins, lost connections, every error the app shows, and each file sent or downloaded, with the server's exact answer when something fails. It's replaced by a fresh one past 2 MB (the previous one is kept as `backroom.log.1`).
+**App:** each person's app keeps its own log in `%APPDATA%\TUFFcord\TUFFcord.log` (Settings → **Open log file**): sign-ins, lost connections, every error the app shows, and each file sent or downloaded, with the server's exact answer when something fails. It's replaced by a fresh one past 2 MB (the previous one is kept as `TUFFcord.log.1`).
 
 | Level | Shows |
 | --- | --- |
@@ -128,7 +131,7 @@ Files travel over plain HTTP on the server's port, separately from voice, so a b
 | `debug` | Chat activity (who posted where, never what they said), mute and deafen, ignored messages, every file request |
 | `info` | Sign-ins, new accounts, renames, disconnects, voice joins, leaves and moves |
 | `info` / `warn` | File requests the server refused, and why (who asked, what was wrong) |
-| `warn` | Wrong passwords, admin actions (kicks, bans, password resets), mic or speaker problems on someone's computer, audio breaking up, people sending too fast, files someone couldn't send or open |
+| `warn` | Wrong passwords, admin actions (kicks, bans, password resets, deleted messages), mic or speaker problems on someone's computer, audio breaking up, people sending too fast, files someone couldn't send or open |
 | `error` | App errors reported by someone's computer, saving problems |
 | `critical` | The server crashing or failing to start |
 
@@ -150,21 +153,21 @@ The app reports problems only it can see, so they show up in your server log:
 
 ## Updates
 
-The app and server check for a new version when they start and every 6 hours after that. You can also check from the app's settings, or turn automatic checks off there. On the server, set `check_updates = false` in `backroom-server.toml` (`update` still works).
+The app and server check for a new version when they start and every 6 hours after that. You can also check from the app's settings, or turn automatic checks off there. On the server, set `check_updates = false` in `TUFFcord-server.toml` (`update` still works).
 
-**The app updates itself.** When a new version is out, a bar says "Backroom X is available". Click **Update now**, and the app:
+**The app updates itself.** When a new version is out, a bar says "TUFFcord X is available". Click **Update now**, and the app:
 1. downloads the new version, with a progress bar
 2. checks it against the release's checksum file, so a broken or incomplete download is never installed
 3. replaces itself and restarts, signing back in and rejoining your voice channel
 
 If anything goes wrong, nothing is changed. The bar offers **Try again** and **Download manually**, and the full reason appears in a message.
 
-For updating to work, `backroom.exe` has to be in a folder you can save files in, like Desktop, Documents or Downloads. A folder like Program Files won't work. While updating, the old copy is briefly kept next to it as `backroom.exe.old` and removed on the next start.
+For updating to work, `TUFFcord.exe` has to be in a folder you can save files in, like Desktop, Documents or Downloads. A folder like Program Files won't work. While updating, the old copy is briefly kept next to it as `TUFFcord.exe.old` and removed on the next start.
 
-In-app updating started with 0.4.0, so going from 0.3.0 to 0.4.0 is done by hand: download the zip and replace `backroom.exe`.
+In-app updating started with 0.4.0, so going from 0.3.0 to 0.4.0 is done by hand: download the zip and replace the app's `.exe`.
 
 **The server updates itself too** (from 0.5.0 on). When it finds a new version, it:
-1. downloads `backroom-server.exe` and checks it against the release's checksum file
+1. downloads `TUFFcord-server.exe` and checks it against the release's checksum file
 2. runs it once with `--version`, to make sure it starts on this PC and is really the new version
 3. swaps it in, then waits until nobody is in a voice channel and chat has been quiet for a minute
 4. tells everyone it's restarting, saves chat history and restarts, which takes about a second
@@ -173,9 +176,9 @@ The apps say "The server is updating…", reconnect on their own, and rejoin voi
 
 Type `update` in the server window to check right now and install and restart immediately, even if people are in voice. To be asked instead, set `auto_update = false`: the window then says when a version is out, and `update` installs it.
 
-The restart works because double-clicking `backroom-server.exe` starts a small watcher, which runs the server and starts it again after an update. The watcher also restarts the server if it ever crashes (after it has been running at least 30 seconds, so a bad setting doesn't loop). Ctrl+C or closing the window stops both. Ending either one in Task Manager also ends the other.
+The restart works because double-clicking `TUFFcord-server.exe` starts a small watcher, which runs the server and starts it again after an update. The watcher also restarts the server if it ever crashes (after it has been running at least 30 seconds, so a bad setting doesn't loop). Ctrl+C or closing the window stops both. Ending either one in Task Manager also ends the other.
 
-Server updating started with 0.5.0, so getting the server from 0.4.0 or earlier to 0.5.0 is done by hand one last time: close the server, replace `backroom-server.exe` with the one from the zip, and start it again.
+Server updating started with 0.5.0, so getting the server from 0.4.0 or earlier to 0.5.0 is done by hand one last time: close the server, replace its `.exe` with the one from the zip, and start it again.
 
 ## Publishing a new version
 
@@ -183,7 +186,7 @@ Server updating started with 0.5.0, so getting the server from 0.4.0 or earlier 
 2. Add a section for that version at the top of `CHANGELOG.md`. It becomes the release notes people see.
 3. Commit and push to `main`.
 
-GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. The release includes the zip, the two `.exe` files (what the app and server download when they update themselves) and `SHA256SUMS.txt`, the checksums the app verifies against. Pushes that don't change the version just run the tests. Running copies of Backroom notice the release on their next check.
+GitHub notices the new version number, runs the tests, builds both programs on its own machines, and publishes them as a release tagged `v0.2.1`. This is the "Release" workflow in the Actions tab. The release includes the zip, the two `.exe` files (what the app and server download when they update themselves, plus copies named `backroom.exe` and `backroom-server.exe` for copies from before the rename, which look for those names) and `SHA256SUMS.txt`, the checksums the app verifies against. Pushes that don't change the version just run the tests. Running copies of TUFFcord notice the release on their next check.
 
 ## Credits
 
@@ -198,7 +201,7 @@ Details are in `client/assets/NOTICE.md`.
 On Windows:
 1. Install Rust from rustup.rs.
 2. Install the Visual Studio Build Tools (C++) and CMake. These are needed to compile the Opus audio codec.
-3. Run `cargo build --release`. The programs land in `target\release\`.
+3. Run `cargo build --release`. The programs land in `target\release\` as `backroom.exe` and `backroom-server.exe` (the code still uses the old name inside; the release renames them).
 
 To cross-compile the Windows programs from Linux, follow the steps in `.github/workflows/release.yml`.
 

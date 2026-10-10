@@ -2,6 +2,13 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.0
+
+- Backroom is now **TUFFcord**. Your settings, sign-in, chat history and accounts carry over, and both the app and the server update themselves as usual. Copies that update keep their old file names (`backroom.exe`, `backroom-server.exe`), so shortcuts keep working. On the server, `backroom-server.toml` is renamed to `TUFFcord-server.toml`, and an `app_name` still at the old default becomes "TUFFcord".
+- Videos and audio have a volume slider next to the speaker button. Click the speaker to mute, or scroll over it. They now start much quieter (16%, a fifth of before), and remember the volume you pick.
+- Admins can delete messages: hold Shift and point at a message, click the trash can, then confirm. It's removed for everyone, along with its files, and the server log notes who deleted it. The server needs this update too.
+- Fixed the app asking you to sign in again after updating itself (when "Keep me signed in" had signed you in). This already applies to the update to 0.8.0.
+
 ## 0.7.1
 
 - Fixed sending files and showing images through a Cloudflare address ("Couldn't reach the server (native-tls: unable to find any user-specified roots…)"). File transfers now trust the same certificates Windows does, like the chat connection.

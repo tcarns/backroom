@@ -1,9 +1,9 @@
 //! Keeping the server up to date without anyone touching it.
 //!
-//! Double-clicking `backroom-server.exe` starts a tiny *watcher*, which starts the
+//! Double-clicking `TUFFcord-server.exe` starts a tiny *watcher*, which starts the
 //! real server as a second copy of itself and waits. Both share the window.
 //!
-//! - When a new release is out, the server downloads `backroom-server.exe`, checks it
+//! - When a new release is out, the server downloads `TUFFcord-server.exe`, checks it
 //!   against the release's checksums, and swaps it in (see `proto::update`). Then, once
 //!   nobody is in voice and chat has been quiet for a minute, it tells everyone it's
 //!   restarting, saves chat history, and exits with [`RESTART_CODE`]. The watcher starts
@@ -90,13 +90,13 @@ fn watch(exe: PathBuf) -> i32 {
                 match child.wait() {
                     Ok(s) => s,
                     Err(e) => {
-                        eprintln!("Backroom: lost track of the server ({e}).");
+                        eprintln!("TUFFcord: lost track of the server ({e}).");
                         return 1;
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Backroom: couldn't start the server ({e}).");
+                eprintln!("TUFFcord: couldn't start the server ({e}).");
                 return 1;
             }
         };
@@ -113,22 +113,22 @@ fn watch(exe: PathBuf) -> i32 {
                     return 0;
                 }
                 if started.elapsed() < MIN_UPTIME_FOR_RESTART {
-                    eprintln!("Backroom: the server stopped right after starting (signal {sig}). Not restarting it.");
+                    eprintln!("TUFFcord: the server stopped right after starting (signal {sig}). Not restarting it.");
                     return 1;
                 }
-                eprintln!("Backroom: the server stopped unexpectedly (signal {sig}). Starting it again in 3 seconds…");
+                eprintln!("TUFFcord: the server stopped unexpectedly (signal {sig}). Starting it again in 3 seconds…");
                 std::thread::sleep(Duration::from_secs(3));
                 reason = Some(format!("crash:signal {sig}"));
             }
             Some(code) => {
                 if started.elapsed() < MIN_UPTIME_FOR_RESTART {
                     eprintln!(
-                        "Backroom: the server stopped right after starting (exit code {code}). Not restarting it; see the messages above."
+                        "TUFFcord: the server stopped right after starting (exit code {code}). Not restarting it; see the messages above."
                     );
                     return code;
                 }
                 eprintln!(
-                    "Backroom: the server stopped unexpectedly (exit code {code}). Starting it again in 3 seconds…"
+                    "TUFFcord: the server stopped unexpectedly (exit code {code}). Starting it again in 3 seconds…"
                 );
                 std::thread::sleep(Duration::from_secs(3));
                 reason = Some(format!("crash:{code}"));
@@ -210,7 +210,11 @@ fn ignore_ctrl_c() {
 
 // ---------------------------------------------------------------- checking and installing
 
-/// `backroom-server --version` prints this and exits (handled before anything else).
+/// `TUFFcord-server --version` prints this and exits (handled before anything else).
+///
+/// It still says "backroom-server": servers from before the rename check that
+/// a download answers exactly `backroom-server <version>` before installing it,
+/// so changing this would stop them updating.
 pub fn print_version_if_asked() {
     if std::env::args()
         .skip(1)
@@ -247,16 +251,18 @@ fn reported_version(exe: &std::path::Path) -> Result<String, String> {
     let mut out = String::new();
     use std::io::Read;
     let _ = child.stdout.take().map(|mut o| o.read_to_string(&mut out));
-    out.trim()
-        .strip_prefix("backroom-server ")
+    let out = out.trim();
+    out.strip_prefix("backroom-server ")
+        .or_else(|| out.strip_prefix("TUFFcord-server "))
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| format!("unexpected answer {:?}", out.trim()))
+        .ok_or_else(|| format!("unexpected answer {out:?}"))
 }
 
-/// The release file the server installs from.
+/// The release file the server installs from. (Releases also carry a copy
+/// named `backroom-server.exe`, for servers from before the rename.)
 pub fn asset_name() -> String {
-    std::env::var("BACKROOM_SERVER_UPDATE_ASSET").unwrap_or_else(|_| "backroom-server.exe".into())
+    std::env::var("BACKROOM_SERVER_UPDATE_ASSET").unwrap_or_else(|_| "TUFFcord-server.exe".into())
 }
 
 /// Installing by itself is for the Windows server (other builds can opt in for testing).
@@ -330,7 +336,7 @@ impl Checker {
                 log::write(
                     level,
                     "update",
-                    &format!("Backroom server {} is up to date", proto::update::CURRENT),
+                    &format!("TUFFcord server {} is up to date", proto::update::CURRENT),
                     asked,
                 );
                 return;
@@ -364,7 +370,7 @@ impl Checker {
                 };
                 warn!(
                     "update",
-                    "Backroom {} is available (this server is {}). {how}",
+                    "TUFFcord {} is available (this server is {}). {how}",
                     release.version,
                     proto::update::CURRENT
                 );
@@ -375,7 +381,7 @@ impl Checker {
 
         info!(
             "update",
-            "Downloading Backroom server {} (this server is {})…",
+            "Downloading TUFFcord server {} (this server is {})…",
             release.version,
             proto::update::CURRENT
         );

@@ -1,6 +1,6 @@
 # Publishes a release whenever main has a version (in Cargo.toml) that hasn't
 # been released yet: runs the tests, builds the Windows programs, then creates
-# the vX.Y.Z tag and a GitHub Release with the zip. Running copies of Backroom
+# the vX.Y.Z tag and a GitHub Release with the zip. Running copies of TUFFcord
 # check for the newest release and tell people an update is available.
 #
 # To publish: raise `version` in Cargo.toml, add a CHANGELOG.md section, push to main.
@@ -55,7 +55,7 @@ jobs:
         if: steps.version.outputs.new == 'true'
         run: cargo test --workspace
 
-      - name: Build backroom.exe and backroom-server.exe
+      - name: Build the app and the server
         if: steps.version.outputs.new == 'true'
         env:
           CC_x86_64_pc_windows_gnu: x86_64-w64-mingw32-gcc
@@ -71,14 +71,19 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          mkdir -p dist/Backroom
-          cp target/x86_64-pc-windows-gnu/release/backroom.exe target/x86_64-pc-windows-gnu/release/backroom-server.exe dist/Backroom/
-          sed 's/$/\r/' README.md > dist/Backroom/README.txt
+          mkdir -p dist/TUFFcord
+          cp target/x86_64-pc-windows-gnu/release/backroom.exe dist/TUFFcord/TUFFcord.exe
+          cp target/x86_64-pc-windows-gnu/release/backroom-server.exe dist/TUFFcord/TUFFcord-server.exe
+          sed 's/$/\r/' README.md > dist/TUFFcord/README.txt
           cd dist
-          zip -r "Backroom-$TAG-windows.zip" Backroom
-          # The raw programs are what the app downloads when it updates itself.
-          cp Backroom/backroom.exe Backroom/backroom-server.exe .
-          sha256sum backroom.exe backroom-server.exe "Backroom-$TAG-windows.zip" > SHA256SUMS.txt
+          zip -r "TUFFcord-$TAG-windows.zip" TUFFcord
+          # The raw programs are what the app and server download when they update
+          # themselves. Copies under the old names are for copies from before the
+          # rename to TUFFcord (0.7.1 and earlier), which look for those names.
+          cp TUFFcord/TUFFcord.exe TUFFcord/TUFFcord-server.exe .
+          cp TUFFcord.exe backroom.exe
+          cp TUFFcord-server.exe backroom-server.exe
+          sha256sum TUFFcord.exe TUFFcord-server.exe backroom.exe backroom-server.exe "TUFFcord-$TAG-windows.zip" > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Release notes from CHANGELOG.md
@@ -96,5 +101,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "$TAG" "dist/Backroom-$TAG-windows.zip" dist/backroom.exe dist/backroom-server.exe dist/SHA256SUMS.txt \
-            --target "$GITHUB_SHA" --title "Backroom ${TAG#v}" --notes-file notes.md
+          gh release create "$TAG" "dist/TUFFcord-$TAG-windows.zip" dist/TUFFcord.exe dist/TUFFcord-server.exe \
+            dist/backroom.exe dist/backroom-server.exe dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --title "TUFFcord ${TAG#v}" --notes-file notes.md

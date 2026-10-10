@@ -428,7 +428,7 @@ impl App {
                                     ui.add_space((ui.available_width() - 330.0).max(0.0) / 2.0);
                                     ui.label(
                                         RichText::new(format!(
-                                            "Backroom {} is available.",
+                                            "TUFFcord {} is available.",
                                             r.version
                                         ))
                                         .color(pal().muted),
@@ -459,7 +459,7 @@ impl App {
                     .rect_filled(r, CornerRadius::same(4), pal().accent);
             }
             ui.add_space(6.0);
-            ui.label(RichText::new("Backroom").size(26.0).strong());
+            ui.label(RichText::new("TUFFcord").size(26.0).strong());
         });
         ui.label(RichText::new("Voice and chat for the group.").color(pal().muted));
         ui.add_space(12.0);
@@ -937,7 +937,7 @@ impl App {
             ui.add_space(4.0);
             ui.add(
                 egui::Label::new(
-                    RichText::new("You signed in with a temporary password. Choose your own to keep using Backroom.")
+                    RichText::new("You signed in with a temporary password. Choose your own to keep using TUFFcord.")
                         .color(pal().muted),
                 )
                 .wrap(),

@@ -1,4 +1,4 @@
-//! Checks GitHub for a newer published release of Backroom, and installs one.
+//! Checks GitHub for a newer published release of TUFFcord, and installs one.
 //!
 //! Releases are created by the GitHub Actions workflow when the version in
 //! Cargo.toml goes up. Installing (used by both the app and the server):
@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// The GitHub repository releases are published to.
-pub const REPO: &str = "tcarns/backroom";
+pub const REPO: &str = "tcarns/TUFFcord";
+/// Its name before the rename (copies up to 0.7.1 look there).
+const OLD_REPO: &str = "tcarns/backroom";
 /// The running program's version (from Cargo.toml).
 pub const CURRENT: &str = env!("CARGO_PKG_VERSION");
 /// How often to look for updates while running.
@@ -103,21 +105,39 @@ pub fn check() -> Result<Option<Release>, String> {
 
 pub fn check_against(current: &str) -> Result<Option<Release>, String> {
     // BACKROOM_UPDATE_URL lets tests point this at a local file server.
-    let url = std::env::var("BACKROOM_UPDATE_URL")
-        .unwrap_or_else(|_| format!("https://api.github.com/repos/{REPO}/releases/latest"));
+    let urls = match std::env::var("BACKROOM_UPDATE_URL") {
+        Ok(u) => vec![u],
+        // The repository was called backroom before. GitHub sends that name on to
+        // the new one, and until the rename the new name isn't found yet.
+        Err(_) => [REPO, OLD_REPO]
+            .iter()
+            .map(|r| format!("https://api.github.com/repos/{r}/releases/latest"))
+            .collect(),
+    };
     let agent = agent(Duration::from_secs(15));
-    let mut resp = agent
-        .get(&url)
-        .header("User-Agent", &format!("Backroom/{current}"))
-        .header("Accept", "application/vnd.github+json")
-        .call()
-        .map_err(|e| format!("couldn't reach GitHub ({e})"))?;
-    match resp.status().as_u16() {
-        200 => {}
-        404 => return Ok(None), // no releases yet
-        403 | 429 => return Err("GitHub asked us to slow down; will try again later".into()),
-        code => return Err(format!("GitHub answered with an error ({code})")),
+    let mut found = None;
+    for url in &urls {
+        let resp = agent
+            .get(url)
+            .header("User-Agent", &format!("TUFFcord/{current}"))
+            .header("Accept", "application/vnd.github+json")
+            .call()
+            .map_err(|e| format!("couldn't reach GitHub ({e})"))?;
+        match resp.status().as_u16() {
+            200 => {
+                found = Some(resp);
+                break;
+            }
+            404 => continue, // no releases yet (or nothing under this name)
+            403 | 429 => {
+                return Err("GitHub asked us to slow down; will try again later".into())
+            }
+            code => return Err(format!("GitHub answered with an error ({code})")),
+        }
     }
+    let Some(mut resp) = found else {
+        return Ok(None);
+    };
     let body = resp
         .body_mut()
         .read_to_string()
@@ -193,7 +213,7 @@ pub fn download_verified(
         .ok_or("Couldn't find the program's folder.")?
         .to_path_buf();
     let agent = agent(Duration::from_secs(600));
-    let user_agent = format!("Backroom/{CURRENT}");
+    let user_agent = format!("TUFFcord/{CURRENT}");
 
     // Expected checksum.
     let mut resp = agent
@@ -220,7 +240,7 @@ pub fn download_verified(
     let tmp = suffixed(exe, ".download");
     let mut file = File::create(&tmp).map_err(|e| {
         format!(
-            "Backroom can't save files in its folder ({}): {e}. Move it to a folder you own, like Documents\\Backroom, or update manually.",
+            "TUFFcord can't save files in its folder ({}): {e}. Move it to a folder you own, like Documents\\TUFFcord, or update manually.",
             dir.display()
         )
     })?;

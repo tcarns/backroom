@@ -227,7 +227,7 @@ pub async fn handle(
     let path = req.path.trim_end_matches('/');
     match (req.method.as_str(), path) {
         ("GET" | "HEAD", "") => {
-            let text = format!("Backroom server {}\n", proto::update::CURRENT);
+            let text = format!("TUFFcord server {}\n", proto::update::CURRENT);
             respond(
                 &mut stream,
                 200,

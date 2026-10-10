@@ -1,4 +1,4 @@
-//! Wire protocol shared by the Backroom server and client.
+//! Wire protocol shared by the TUFFcord server and client.
 //!
 //! One WebSocket connection carries:
 //! - Control messages as JSON text frames (`ClientMsg` / `ServerMsg`).
@@ -87,6 +87,11 @@ pub enum ClientMsg {
     /// Ask for an attachment's bytes; the server answers with an ATTACH_DATA frame.
     /// (Apps before 0.7; newer ones download over HTTP.)
     GetAttachment {
+        id: String,
+    },
+    /// Admins: delete a message (and its files) for everyone.
+    DeleteMessage {
+        channel: String,
         id: String,
     },
     /// Post a message with files uploaded over HTTP (see [`files`]).
@@ -372,6 +377,11 @@ pub enum ServerMsg {
     Members {
         list: Vec<Member>,
     },
+    /// An admin deleted a message.
+    MessageDeleted {
+        channel: String,
+        id: String,
+    },
 }
 
 /// The server has accounts.
@@ -653,7 +663,7 @@ mod tests {
     #[test]
     fn welcome_from_older_servers() {
         // A 0.5 server's Welcome has no account fields.
-        let json = r#"{"type":"welcome","id":4,"name":"Sam","appName":"Backroom","textChannels":["general"],
+        let json = r#"{"type":"welcome","id":4,"name":"Sam","appName":"TUFFcord","textChannels":["general"],
             "voiceChannels":["Lounge"],"maxPerVoiceChannel":8,"history":{},"voiceState":[
             {"name":"Lounge","members":[{"id":4,"name":"Sam","muted":false,"deafened":false}]}],
             "users":[{"id":4,"name":"Sam"}],"features":["attachments"],"maxAttachmentBytes":1}"#;

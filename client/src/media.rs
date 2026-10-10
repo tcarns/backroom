@@ -1,5 +1,5 @@
 //! Playing videos and audio inside the app, with Windows' own Media Foundation
-//! (the same decoders the Films & TV app uses), so Backroom carries no codecs.
+//! (the same decoders the Films & TV app uses), so TUFFcord carries no codecs.
 //!
 //! A [`Player`] runs on its own thread: it owns the media engine, which plays
 //! the sound itself, and hands each new video frame over already scaled to the
@@ -749,7 +749,7 @@ mod imp {
             _volume: f32,
             _wake: Wake,
         ) -> Result<Player, String> {
-            Err("Playing inside Backroom needs Windows.".into())
+            Err("Playing inside TUFFcord needs Windows.".into())
         }
         pub fn play(&self) {}
         pub fn pause(&self) {}

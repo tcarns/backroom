@@ -17,6 +17,8 @@ use eframe::egui::{
 use proto::files::{duration_label, extension, kind_of, runs_code, size_label, Kind};
 use proto::Attachment;
 
+pub use backroom::settings::DEFAULT_MEDIA_LEVEL;
+
 /// Something clicked or needed in the chat, done after drawing.
 pub enum Act {
     /// Fetch an image (or poster) shown at this size.
@@ -27,10 +29,13 @@ pub enum Act {
     Toggle,
     Seek(f64),
     Volume(f32),
+    ToggleMute,
     Open(Attachment),
     Save(Attachment),
     Link(String),
     Repaint(std::time::Duration),
+    /// An admin clicked the trash can on a message.
+    AskDelete(proto::ChatMessage),
 }
 
 /// The video or audio playing now.
@@ -42,6 +47,8 @@ pub struct Playing {
 }
 
 const CARD_W: f32 = 420.0;
+/// Width of the little volume bar next to the speaker button.
+const VOLUME_BAR: f32 = 56.0;
 
 fn card_frame() -> Frame {
     Frame::new()
@@ -351,7 +358,7 @@ impl App {
                     tg.clone(),
                     Color32::WHITE,
                 );
-                let right = bar.right() - 70.0;
+                let right = bar.right() - 46.0 - 26.0 - 2.0 - VOLUME_BAR - 10.0;
                 let seek = Rect::from_min_max(
                     egui::pos2(tx + tg.size().x + 12.0, bar.top() + 8.0),
                     egui::pos2(right, bar.bottom() - 8.0),
@@ -366,7 +373,7 @@ impl App {
                         acts.push(Act::Seek(f as f64 * st.duration));
                     }
                 }
-                self.volume_button(ui, egui::pos2(bar.right() - 52.0, bar.center().y), acts);
+                self.volume_control(ui, right + 6.0, bar.center().y, true, acts);
                 let open = Rect::from_center_size(
                     egui::pos2(bar.right() - 20.0, bar.center().y),
                     Vec2::splat(26.0),
@@ -427,42 +434,44 @@ impl App {
             });
     }
 
-    fn volume_button(&self, ui: &mut egui::Ui, center: egui::Pos2, acts: &mut Vec<Act>) {
-        let rect = Rect::from_center_size(center, Vec2::splat(26.0));
-        let resp = ui.interact(
-            rect,
-            ui.id().with(("vol", center.x as i32, center.y as i32)),
-            Sense::click(),
-        );
-        let muted = self.s.media_volume <= 0.001;
-        let glyph = if muted { "🔇" } else { "🔊" };
+    /// Speaker button (click to mute or unmute) and a small volume bar, starting
+    /// at `left`. Scrolling over either changes the volume too. Returns its width.
+    fn volume_control(&self, ui: &mut egui::Ui, left: f32, y: f32, on_dark: bool, acts: &mut Vec<Act>) -> f32 {
+        let level = self.s.media_level;
+        let muted = level <= 0.001;
+        let icon = Rect::from_center_size(egui::pos2(left + 13.0, y), Vec2::splat(26.0));
+        let resp = ui.interact(icon, ui.id().with(("vol", left as i32, y as i32)), Sense::click());
+        let ink = if on_dark { Color32::WHITE } else { pal().muted };
         ui.painter().text(
-            center,
+            icon.center(),
             Align2::CENTER_CENTER,
-            glyph,
+            if muted { "🔇" } else { "🔊" },
             FontId::proportional(14.0),
-            if resp.hovered() {
-                pal().accent
-            } else {
-                Color32::WHITE
-            },
+            if resp.hovered() { pal().accent } else { ink },
         );
-        let resp = resp.on_hover_text(if muted {
-            "Unmute"
-        } else {
-            "Mute (scroll to change the volume)"
-        });
+        let resp = resp.on_hover_text(format!(
+            "{} · volume {}% (drag the bar or scroll to change it)",
+            if muted { "Unmute" } else { "Mute" },
+            (level * 100.0).round()
+        ));
         if resp.clicked() {
-            acts.push(Act::Volume(if muted { 0.8 } else { 0.0 }));
+            acts.push(Act::ToggleMute);
         }
-        if resp.hovered() {
+        let bar = Rect::from_min_max(
+            egui::pos2(icon.right() + 2.0, y - 7.0),
+            egui::pos2(icon.right() + 2.0 + VOLUME_BAR, y + 7.0),
+        );
+        if let Some(f) = seek_bar(ui, bar, level, on_dark) {
+            acts.push(Act::Volume(f));
+        }
+        let over = ui.rect_contains_pointer(icon.union(bar));
+        if over {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.5 {
-                acts.push(Act::Volume(
-                    (self.s.media_volume + scroll / 400.0).clamp(0.0, 1.0),
-                ));
+                acts.push(Act::Volume((level + scroll / 400.0).clamp(0.0, 1.0)));
             }
         }
+        icon.width() + 2.0 + VOLUME_BAR
     }
 
     fn audio_ui(&self, ui: &mut egui::Ui, a: &Attachment, acts: &mut Vec<Act>) {
@@ -512,10 +521,16 @@ impl App {
                         };
                         ui.label(RichText::new(sub).size(12.5).color(pal().faint));
                         if let Some(s) = &status {
-                            let (bar, _) = ui.allocate_exact_size(
-                                Vec2::new(ui.available_width() - 40.0, 14.0),
+                            let (row, _) = ui.allocate_exact_size(
+                                Vec2::new(ui.available_width() - 6.0, 16.0),
                                 Sense::hover(),
                             );
+                            let vol_w = 26.0 + 2.0 + VOLUME_BAR;
+                            let bar = Rect::from_min_max(
+                                row.min,
+                                egui::pos2(row.right() - vol_w - 10.0, row.bottom()),
+                            );
+                            self.volume_control(ui, row.right() - vol_w, row.center().y, false, acts);
                             let frac = if s.duration > 0.0 {
                                 (s.position / s.duration) as f32
                             } else {
@@ -758,12 +773,19 @@ impl App {
                         p.player.seek(t);
                     }
                 }
-                Act::Volume(v) => {
-                    self.s.media_volume = v;
-                    if let Some(p) = &self.player {
-                        p.player.set_volume(v);
+                Act::Volume(v) => self.set_media_level(v),
+                Act::ToggleMute => {
+                    if self.s.media_level > 0.001 {
+                        self.unmute_level = self.s.media_level;
+                        self.set_media_level(0.0);
+                    } else {
+                        let back = if self.unmute_level > 0.001 {
+                            self.unmute_level
+                        } else {
+                            DEFAULT_MEDIA_LEVEL
+                        };
+                        self.set_media_level(back);
                     }
-                    self.s.save();
                 }
                 Act::Open(a) => {
                     if runs_code(&a.name) {
@@ -781,8 +803,22 @@ impl App {
                 }
                 Act::Link(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
                 Act::Repaint(after) => ctx.request_repaint_after(after),
+                Act::AskDelete(m) => {
+                    // So Enter answers the dialog instead of sending a half-typed message.
+                    ctx.memory_mut(|mem| mem.stop_text_input());
+                    self.confirm_delete = Some(m);
+                }
             }
         }
+    }
+
+    fn set_media_level(&mut self, v: f32) {
+        let v = v.clamp(0.0, 1.0);
+        self.s.media_level = v;
+        if let Some(p) = &self.player {
+            p.player.set_volume(v);
+        }
+        self.settings_dirty = true;
     }
 
     /// Download if needed, then open with the system's program.
@@ -819,7 +855,7 @@ impl App {
             [0, 0]
         };
         backroom::applog::info(format!("Playing {} ({}) in the chat", a.name, a.mime));
-        match Player::open(&path, size, self.s.media_volume, self.wake.clone()) {
+        match Player::open(&path, size, self.s.media_level, self.wake.clone()) {
             Ok(player) => {
                 self.player = Some(Playing {
                     id: a.id.clone(),

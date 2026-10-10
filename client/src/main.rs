@@ -95,15 +95,17 @@ fn main() -> eframe::Result {
     // Handed over by the previous copy when it restarts us after an update.
     let resume = updater::take_resume();
     let just_updated = std::env::args().any(|a| a == "--updated");
+    // Backroom's settings folder becomes TUFFcord's (first run after the rename).
+    backroom::settings::move_old_folders();
     let settings = Settings::load();
     backroom::applog::info(format!(
-        "Backroom {} started (log: {})",
+        "TUFFcord {} started (log: {})",
         updates::CURRENT,
         backroom::applog::path().display()
     ));
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Backroom")
+            .with_title("TUFFcord")
             .with_inner_size([1040.0, 700.0])
             .with_min_inner_size([620.0, 420.0])
             .with_icon(app_icon()),
@@ -112,7 +114,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "Backroom",
+        "TUFFcord",
         options,
         Box::new(move |cc| Ok(Box::new(App::new(cc, settings, resume, just_updated)))),
     )
@@ -288,6 +290,13 @@ struct App {
     player: Option<attach_ui::Playing>,
     /// "Open this program?" waiting for an answer.
     confirm_open: Option<Attachment>,
+    /// "Delete message?" waiting for an answer (admins).
+    confirm_delete: Option<proto::ChatMessage>,
+    /// Settings changed in a way that's saved once the mouse is let go
+    /// (dragging a volume bar would otherwise save on every frame).
+    settings_dirty: bool,
+    /// The media volume to go back to when unmuting.
+    unmute_level: f32,
     /// Emoji picker: the tab shown (a group, or RECENT) and what's typed in its search.
     emoji_tab: u8,
     emoji_search: String,
@@ -360,6 +369,9 @@ impl App {
             emoji: RefCell::new(chat_text::EmojiCache::default()),
             player: None,
             confirm_open: None,
+            confirm_delete: None,
+            settings_dirty: false,
+            unmute_level: backroom::settings::DEFAULT_MEDIA_LEVEL,
             emoji_tab: RECENT,
             emoji_search: String::new(),
         };
@@ -381,7 +393,14 @@ impl App {
             if let Some(t) = r.text_channel {
                 app.current_text = t;
             }
-            if !app.connect_saved(r.token, r.password) {
+            // Copies up to 0.7.1 hand over an empty sign-in when they were signed in
+            // with the saved key (the usual case): use the saved one then.
+            let (token, password) = if r.token.is_empty() && r.password.is_empty() {
+                (app.s.token.clone(), app.s.password.clone())
+            } else {
+                (r.token, r.password)
+            };
+            if !app.connect_saved(token, password) {
                 app.want_voice = None;
             }
         } else if app.s.auto_connect && app.s.remember {
@@ -390,7 +409,7 @@ impl App {
         }
         if just_updated {
             app.show_banner(
-                format!("Updated to Backroom {}.", updates::CURRENT),
+                format!("Updated to TUFFcord {}.", updates::CURRENT),
                 false,
                 Some(8),
             );
@@ -625,7 +644,7 @@ impl App {
                     self.conn = Conn::Reconnecting;
                     let text = match &self.server_restarting {
                         Some(v) if !v.is_empty() => {
-                            format!("The server is updating to Backroom {v}. Back in a moment…")
+                            format!("The server is updating to TUFFcord {v}. Back in a moment…")
                         }
                         Some(_) => "The server is restarting. Back in a moment…".to_string(),
                         None => format!("Connection lost ({reason}). Reconnecting…"),
@@ -837,6 +856,34 @@ impl App {
                     sess.members = list;
                 }
             }
+            ServerMsg::MessageDeleted { channel, id } => {
+                let mut gone = Vec::new();
+                if let Some(list) = self
+                    .session
+                    .as_mut()
+                    .and_then(|s| s.history.get_mut(&channel))
+                {
+                    if let Some(pos) = list.iter().position(|m| m.id == id) {
+                        let m = list.remove(pos);
+                        for a in m.attachments {
+                            gone.extend(a.poster.map(|p| p.id));
+                            gone.push(a.id);
+                        }
+                    }
+                }
+                for f in gone {
+                    if self.player.as_ref().is_some_and(|p| p.id == f) {
+                        self.player = None;
+                    }
+                    if self.confirm_open.as_ref().is_some_and(|a| a.id == f) {
+                        self.confirm_open = None;
+                    }
+                    self.att.gone(&f); // also closes the full-size viewer
+                }
+                if self.confirm_delete.as_ref().is_some_and(|m| m.id == id) {
+                    self.confirm_delete = None;
+                }
+            }
             ServerMsg::Restarting { version } => self.server_restarting = Some(version),
             m @ (ServerMsg::AccountUpdated { .. }
             | ServerMsg::Accounts { .. }
@@ -940,6 +987,24 @@ fn initials(name: &str) -> String {
         [a] => first(a),
         [] => "?".into(),
     }
+}
+
+/// A small trash can: lid with a handle, and a tapered bin with two ribs.
+fn paint_trash(p: &egui::Painter, c: egui::Pos2, color: Color32) {
+    let s = Stroke::new(1.5_f32, color);
+    let v = |x: f32, y: f32| c + egui::vec2(x, y);
+    // Lid and handle.
+    p.line_segment([v(-6.0, -4.0), v(6.0, -4.0)], s);
+    p.line_segment([v(-2.0, -4.0), v(-2.0, -6.0)], s);
+    p.line_segment([v(-2.0, -6.0), v(2.0, -6.0)], s);
+    p.line_segment([v(2.0, -6.0), v(2.0, -4.0)], s);
+    // Bin.
+    p.add(egui::Shape::closed_line(
+        vec![v(-4.6, -2.0), v(4.6, -2.0), v(3.6, 6.5), v(-3.6, 6.5)],
+        s,
+    ));
+    p.line_segment([v(-1.4, 0.2), v(-1.2, 4.4)], s);
+    p.line_segment([v(1.4, 0.2), v(1.2, 4.4)], s);
 }
 
 /// Round avatar with initials. Speaking adds the amber glow ring.
@@ -1178,7 +1243,6 @@ fn time_label(ts: u64) -> String {
         .unwrap_or_default()
 }
 
-/// Message text with clickable links.
 // ---------------------------------------------------------------- screens
 
 impl App {
@@ -1196,6 +1260,7 @@ impl App {
         self.member_panel(ctx, &speaking);
         self.chat(ctx);
         self.confirm_open_dialog(ctx);
+        self.confirm_delete_dialog(ctx);
         self.volume_popup(ctx);
         self.emoji_picker(ctx);
         self.image_viewer(ctx);
@@ -1598,7 +1663,7 @@ impl App {
             });
     }
 
-    /// "Backroom X is available" bar above the chat.
+    /// "TUFFcord X is available" bar above the chat.
     fn update_bar(&mut self, ui: &mut egui::Ui) {
         let latest = self.update.lock().latest.clone();
         let Some(r) = latest else { return };
@@ -1618,7 +1683,7 @@ impl App {
                     let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
                     ui.painter().circle_filled(dot.center(), 4.5, pal().accent);
                     ui.label(
-                        RichText::new(format!("Backroom {} is available.", r.version)).strong(),
+                        RichText::new(format!("TUFFcord {} is available.", r.version)).strong(),
                     );
                     ui.label(
                         RichText::new(format!("You have {}.", updates::CURRENT)).color(pal().muted),
@@ -1643,7 +1708,7 @@ impl App {
             Phase::Idle => {
                 if updater::can_install(r) {
                     let mut tip = format!(
-                        "Downloads Backroom {}, installs it and restarts the app.",
+                        "Downloads TUFFcord {}, installs it and restarts the app.",
                         r.version
                     );
                     if let Some(ch) = &self.voice_channel {
@@ -1725,7 +1790,12 @@ impl App {
             server: self.s.server.clone(),
             name: self.s.name.clone(),
             password: self.acct.group_password.clone().unwrap_or_default(),
-            token: self.acct.token.clone().unwrap_or_default(),
+            // Signed in with the saved key, the server doesn't send a new one.
+            token: self
+                .acct
+                .token
+                .clone()
+                .unwrap_or_else(|| self.s.token.clone()),
             voice: self
                 .voice_channel
                 .clone()
@@ -1741,7 +1811,7 @@ impl App {
             }
             Err(e) => {
                 self.updater.reset();
-                self.show_banner(format!("Backroom was updated but couldn't restart itself ({e}). Close it and open it again."), true, None);
+                self.show_banner(format!("TUFFcord was updated but couldn't restart itself ({e}). Close it and open it again."), true, None);
             }
         }
     }
@@ -1779,6 +1849,10 @@ impl App {
                     });
                     return;
                 }
+                // Admins holding Shift get a delete button on the message under the pointer.
+                let deleting = self.is_admin() && ui.input(|inp| inp.modifiers.shift);
+                let row = ui.max_rect().x_range();
+                let mut delete_target: Option<(egui::Rect, &proto::ChatMessage)> = None;
                 let mut i = 0;
                 while i < msgs.len() {
                     let first = &msgs[i];
@@ -1826,6 +1900,9 @@ impl App {
                     {
                         j += 1;
                     }
+                    let group_top = ui.cursor().top();
+                    // Painted behind the first message (it covers the name row too).
+                    let first_bg = ui.painter().add(egui::Shape::Noop);
                     ui.horizontal_top(|ui| {
                         ui.add_space(20.0);
                         let (rect, _) =
@@ -1850,23 +1927,88 @@ impl App {
                                         .color(pal().faint),
                                 );
                             });
-                            for m in &msgs[i..j] {
-                                if !m.text.is_empty() {
-                                    let link =
-                                        chat_text::show(ui, &m.text, &mut self.emoji.borrow_mut());
-                                    if let Some(url) = link {
-                                        acts.push(attach_ui::Act::Link(url));
-                                    }
+                            for (k, m) in msgs[i..j].iter().enumerate() {
+                                let top = if k == 0 { group_top } else { ui.cursor().top() };
+                                let bg = if k == 0 {
+                                    first_bg
+                                } else {
+                                    ui.painter().add(egui::Shape::Noop)
+                                };
+                                let body = ui
+                                    .vertical(|ui| {
+                                        if !m.text.is_empty() {
+                                            let link = chat_text::show(
+                                                ui,
+                                                &m.text,
+                                                &mut self.emoji.borrow_mut(),
+                                            );
+                                            if let Some(url) = link {
+                                                acts.push(attach_ui::Act::Link(url));
+                                            }
+                                        }
+                                        for a in &m.attachments {
+                                            self.attachment_ui(ui, a, acts);
+                                            ui.add_space(4.0);
+                                        }
+                                    })
+                                    .response
+                                    .rect;
+                                if !deleting {
+                                    continue;
                                 }
-                                for a in &m.attachments {
-                                    self.attachment_ui(ui, a, acts);
-                                    ui.add_space(4.0);
+                                // The last one in a group also covers the bottom of the avatar.
+                                let bottom = if k + 1 == j - i {
+                                    body.bottom().max(group_top + 40.0)
+                                } else {
+                                    body.bottom()
+                                };
+                                let area = egui::Rect::from_x_y_ranges(
+                                    row.min + 8.0..=row.max - 8.0,
+                                    top - 2.0..=bottom + 2.0,
+                                );
+                                if ui.rect_contains_pointer(area) {
+                                    ui.painter().set(
+                                        bg,
+                                        egui::Shape::rect_filled(
+                                            area,
+                                            CornerRadius::same(4),
+                                            theme::mix(pal().bg, pal().red, 0.1),
+                                        ),
+                                    );
+                                    delete_target = Some((area, m));
                                 }
                             }
                         });
                     });
                     ui.add_space(10.0);
                     i = j;
+                }
+                // Drawn after every message so it sits on top and gets the click.
+                if let Some((area, m)) = delete_target {
+                    // Fits inside a one-line message, so the pointer stays on it.
+                    let r = egui::Rect::from_min_size(
+                        egui::pos2(area.right() - 32.0, area.top() + 1.0),
+                        egui::vec2(28.0, (area.height() - 2.0).min(24.0)),
+                    );
+                    let resp = ui
+                        .interact(r, ui.id().with(("delete", &m.id)), Sense::click())
+                        .on_hover_text("Delete message");
+                    let p = ui.painter();
+                    p.rect(
+                        r,
+                        CornerRadius::same(6),
+                        if resp.hovered() { pal().red } else { pal().raised },
+                        Stroke::new(1.0_f32, pal().line),
+                        egui::StrokeKind::Inside,
+                    );
+                    paint_trash(
+                        p,
+                        r.center(),
+                        if resp.hovered() { Color32::WHITE } else { pal().red },
+                    );
+                    if resp.clicked() {
+                        acts.push(attach_ui::Act::AskDelete(m.clone()));
+                    }
                 }
             });
     }
@@ -2159,6 +2301,101 @@ impl App {
         if pressed_elsewhere || ctx.input(|i| i.key_pressed(Key::Escape)) {
             self.emoji_open = false;
             self.emoji_search.clear();
+        }
+    }
+
+    /// "Delete message?" after an admin clicks the trash can.
+    fn confirm_delete_dialog(&mut self, ctx: &egui::Context) {
+        let Some(m) = self.confirm_delete.clone() else {
+            return;
+        };
+        let mut delete = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Enter));
+        let mut cancel = false;
+        let modal = egui::Modal::new(egui::Id::new("confirm_delete"))
+            .backdrop_color(Color32::from_black_alpha(140))
+            .frame(
+                Frame::popup(&ctx.style())
+                    .fill(pal().raised)
+                    .corner_radius(CornerRadius::same(10))
+                    .inner_margin(Margin::same(20)),
+            )
+            .show(ctx, |ui| {
+                ui.set_width(400.0);
+                ui.label(RichText::new("Delete message?").size(18.0).strong().color(pal().text));
+                ui.add_space(4.0);
+                ui.label(
+                    RichText::new(
+                        "This removes it for everyone, along with any files attached to it. It can't be undone.",
+                    )
+                    .color(pal().muted),
+                );
+                ui.add_space(12.0);
+                // What's being deleted, the way it looks in the chat.
+                Frame::new()
+                    .fill(pal().bg)
+                    .stroke(Stroke::new(1.0_f32, pal().line))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(Margin::same(10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&m.author).strong().color(pal().text));
+                            ui.label(
+                                RichText::new(time_label(m.ts)).size(12.0).color(pal().faint),
+                            );
+                        });
+                        if !m.text.is_empty() {
+                            let mut text: String = m.text.chars().take(300).collect();
+                            if text.len() < m.text.len() {
+                                text.push('…');
+                            }
+                            chat_text::show(ui, &text, &mut self.emoji.borrow_mut());
+                        }
+                        for a in &m.attachments {
+                            ui.label(
+                                RichText::new(format!(
+                                    "File: {} ({})",
+                                    a.name,
+                                    images::size_label(a.size)
+                                ))
+                                .color(pal().muted),
+                            );
+                        }
+                    });
+                ui.add_space(14.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let del = egui::Button::new(
+                        RichText::new("Delete").color(Color32::WHITE).strong(),
+                    )
+                    .fill(pal().red)
+                    .min_size(egui::vec2(84.0, 30.0));
+                    if ui.add(del).clicked() {
+                        delete = true;
+                    }
+                    if ui
+                        .add(egui::Button::new("Cancel").min_size(egui::vec2(84.0, 30.0)))
+                        .clicked()
+                    {
+                        cancel = true;
+                    }
+                });
+            });
+        if modal.should_close() {
+            cancel = true;
+        }
+        if delete && !cancel {
+            let channel = if m.channel.is_empty() {
+                self.current_text.clone()
+            } else {
+                m.channel.clone()
+            };
+            self.net.send(ClientMsg::DeleteMessage {
+                channel,
+                id: m.id.clone(),
+            });
+        }
+        if delete || cancel {
+            self.confirm_delete = None;
         }
     }
 
@@ -2728,7 +2965,7 @@ impl App {
                             let status = if checking {
                                 "Checking…".to_string()
                             } else if let Some(r) = &latest {
-                                format!("Backroom {} is available.", r.version)
+                                format!("TUFFcord {} is available.", r.version)
                             } else if let Some(e) = &error {
                                 format!("Couldn't check: {e}.")
                             } else if checked {
@@ -2797,7 +3034,7 @@ impl App {
                         self.account_settings(ui);
                         if let Some(mb) = self.mem_mb {
                             ui.label(
-                                RichText::new(format!("Backroom is using {mb:.0} MB of memory."))
+                                RichText::new(format!("TUFFcord is using {mb:.0} MB of memory."))
                                     .size(12.5)
                                     .color(pal().faint),
                             );
@@ -2876,6 +3113,10 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.settings_dirty && !ctx.input(|i| i.pointer.any_down()) {
+            self.settings_dirty = false;
+            self.s.save();
+        }
         self.handle_events(ctx);
         self.handle_keys(ctx);
         self.handle_image_input(ctx);

@@ -281,7 +281,7 @@ fn describe_connect_error(e: &str) -> String {
     } else if lower.contains("certificate") || lower.contains("tls") || lower.contains("ssl") {
         format!("a secure connection couldn't be set up ({e})")
     } else if lower.contains("404") || lower.contains("http error") {
-        "something answered, but it isn't a Backroom server".into()
+        "something answered, but it isn't a TUFFcord server".into()
     } else {
         e.to_string()
     }

@@ -1,7 +1,7 @@
-//! The app's log: `backroom.log` next to the settings (%APPDATA%\Backroom on
+//! The app's log: `TUFFcord.log` next to the settings (%APPDATA%\TUFFcord on
 //! Windows). Sign-ins, connection trouble, every error the app shows, and file
 //! transfer details, so problems can be looked into afterwards. When it passes
-//! 2 MB it's renamed to `backroom.log.1` (replacing the previous one).
+//! 2 MB it's renamed to `TUFFcord.log.1` (replacing the previous one).
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -13,7 +13,7 @@ const MAX_BYTES: u64 = 2 * 1024 * 1024;
 static FILE: Mutex<Option<(File, u64)>> = Mutex::new(None);
 
 pub fn path() -> PathBuf {
-    crate::settings::path().with_file_name("backroom.log")
+    crate::settings::path().with_file_name("TUFFcord.log")
 }
 
 fn open() -> Option<(File, u64)> {

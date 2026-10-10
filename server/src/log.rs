@@ -154,7 +154,7 @@ pub fn write(l: Level, category: &str, message: &str, force: bool) {
         }
         sink.bytes += line.len() as u64;
         if sink.bytes > MAX_FILE_BYTES {
-            // Keep one old file: backroom.log -> backroom.log.1
+            // Keep one old file: TUFFcord.log -> TUFFcord.log.1
             let path = sink.path.clone();
             *file = None;
             let mut old = path.clone().into_os_string();

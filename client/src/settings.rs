@@ -1,8 +1,11 @@
-//! Settings saved between runs, in %APPDATA%\Backroom\settings.json on Windows.
+//! Settings saved between runs, in %APPDATA%\TUFFcord\settings.json on Windows.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+/// Starting volume for videos and audio in the chat (a fifth of 0.7's 0.8).
+pub const DEFAULT_MEDIA_LEVEL: f32 = 0.16;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -40,8 +43,10 @@ pub struct Settings {
     pub theme: String,
     /// The member list on the right is open.
     pub show_members: bool,
-    /// Volume for videos and audio played in the chat (0.0 to 1.0).
-    pub media_volume: f32,
+    /// Volume for videos and audio played in the chat (0.0 to 1.0). Called
+    /// `media_volume` before 0.8, which started louder; that old value is left
+    /// behind on purpose so everyone starts at the new, quieter default.
+    pub media_level: f32,
     /// Emoji picked recently, newest first.
     pub recent_emoji: Vec<String>,
 }
@@ -70,7 +75,7 @@ impl Default for Settings {
             check_updates: true,
             theme: "plum".into(),
             show_members: true,
-            media_volume: 0.8,
+            media_level: DEFAULT_MEDIA_LEVEL,
             recent_emoji: Vec::new(),
         }
     }
@@ -82,8 +87,66 @@ pub fn path() -> PathBuf {
     }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("Backroom")
+        .join("TUFFcord")
         .join("settings.json")
+}
+
+/// The app was called Backroom before 0.8. Move its folders (settings and log in
+/// %APPDATA%, downloaded files in %LOCALAPPDATA%) to the new name, once, so
+/// people stay signed in and keep their settings. Call before anything else
+/// touches those folders.
+pub fn move_old_folders() {
+    if std::env::var_os("BACKROOM_SETTINGS").is_some() {
+        return;
+    }
+    let config = dirs::config_dir();
+    if let Some(base) = &config {
+        move_old_folder(base);
+    }
+    if let Some(base) = dirs::cache_dir().filter(|c| Some(c) != config.as_ref()) {
+        move_old_folder(&base);
+    }
+}
+
+/// `<base>/Backroom` becomes `<base>/TUFFcord` (and the log file inside is
+/// renamed), unless a TUFFcord folder is there already. Says what happened.
+pub fn move_old_folder(base: &std::path::Path) -> &'static str {
+    let old = base.join("Backroom");
+    let new = base.join("TUFFcord");
+    if !old.is_dir() {
+        return "nothing to move";
+    }
+    if new.exists() {
+        return "already moved";
+    }
+    // Right after an update the old copy may still be closing (with its log
+    // open, which stops Windows renaming the folder), so give it a moment.
+    let mut moved = false;
+    for _ in 0..12 {
+        if std::fs::rename(&old, &new).is_ok() {
+            moved = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    if !moved {
+        // Something still has a file open in there: bring the settings over at least.
+        if !old.join("settings.json").exists() {
+            return "couldn't move";
+        }
+        let _ = std::fs::create_dir_all(&new);
+        let copied = std::fs::copy(old.join("settings.json"), new.join("settings.json")).is_ok();
+        return if copied { "copied settings" } else { "couldn't move" };
+    }
+    for (from, to) in [
+        ("backroom.log", "TUFFcord.log"),
+        ("backroom.log.1", "TUFFcord.log.1"),
+    ] {
+        if new.join(from).exists() {
+            let _ = std::fs::rename(new.join(from), new.join(to));
+        }
+    }
+    "moved"
 }
 
 impl Settings {
@@ -124,5 +187,37 @@ impl Settings {
         } else {
             self.volume(name)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_folder_moves_once() {
+        let base = std::env::temp_dir().join(format!("tuff-move-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(move_old_folder(&base), "nothing to move");
+
+        let old = base.join("Backroom");
+        std::fs::create_dir_all(old.join("cache")).unwrap();
+        std::fs::write(old.join("settings.json"), r#"{"name":"Tyler","token":"t"}"#).unwrap();
+        std::fs::write(old.join("backroom.log"), "old log").unwrap();
+        std::fs::write(old.join("cache").join("abc.mp4"), "v").unwrap();
+        assert_eq!(move_old_folder(&base), "moved");
+        let new = base.join("TUFFcord");
+        assert!(!old.exists());
+        assert!(new.join("settings.json").exists());
+        assert_eq!(std::fs::read_to_string(new.join("TUFFcord.log")).unwrap(), "old log");
+        assert!(new.join("cache").join("abc.mp4").exists());
+
+        // An old copy run again recreates Backroom; the new folder is left alone.
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("settings.json"), "{}").unwrap();
+        assert_eq!(move_old_folder(&base), "already moved");
+        assert!(std::fs::read_to_string(new.join("settings.json")).unwrap().contains("Tyler"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
