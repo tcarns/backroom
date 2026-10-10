@@ -5,8 +5,8 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 **Last updated:** 2026-10-10. **Released:** 0.9.2 (app and server).
 
 ## Waiting on the owner
-- Try 0.9.2 on the PC: drag the sidebar and member list edges, right-click a
-  channel (rename, delete), drag channels into a new order. Server must be 0.9.2.
+- Nothing. Owner confirmed 0.9.2 on 2026-10-10 (panel resizing, channel
+  rename/delete menu, drag to reorder).
 
 ## In 0.9.2
 - Sidebar and member list widths: drag the edge between them and the chat
