@@ -6,3 +6,4 @@ data/
 backroom-server.toml
 # Same for the renamed settings file (0.8 and later).
 TUFFcord-server.toml
+__pycache__/
