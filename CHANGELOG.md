@@ -2,6 +2,10 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.3
+
+- Fixed the app freezing (and taking Windows' volume mixer with it) a few seconds into a video. It wasn't the graphics card: the video player and Windows could end up waiting on each other forever. If 0.8.2 turned off "Use the graphics card for videos" after a freeze, you can turn it back on in Settings.
+
 ## 0.8.2
 
 - Pointing at a chat message now gives it a soft highlight, like Discord.

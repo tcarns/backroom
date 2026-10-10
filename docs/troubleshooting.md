@@ -4,6 +4,13 @@ Problems already solved once: symptom → cause → fix. Add an entry whenever a
 bug or environment problem takes more than one try to understand.
 
 ## People using it
+- **App freezes ("not responding") seconds into a video, Windows volume mixer
+  hangs too; logged as "closed unexpectedly while playing", with or without
+  the graphics card** → lock-order deadlock in `client/src/media.rs`: the player
+  thread held `shared` while calling `engine.GetCurrentTime()`, while Media
+  Foundation held its engine/audio-session lock and called `EventNotify`, which
+  waits for `shared`. Fixed in 0.8.3: never call the engine while holding
+  `shared`; `EventNotify` ignores events other than metadata/ended/error.
 - **"native-tls: unable to find any user-specified roots in the final cert
   chain" when sending files** → HTTP transfers used ureq's built-in root list,
   which lacked some Cloudflare chains. Fixed in 0.7.1: `RootCerts::PlatformVerifier`.

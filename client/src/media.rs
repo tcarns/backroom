@@ -162,6 +162,18 @@ mod imp {
             param2: u32,
         ) -> windows::core::Result<()> {
             let event = MF_MEDIA_ENGINE_EVENT(event as i32);
+            // Windows calls this from its own threads, sometimes while holding
+            // the engine's internal lock (and the audio session's: volume
+            // changes from the system mixer arrive here). So it only takes
+            // `shared` for the few events that matter, and nobody may call the
+            // engine while holding `shared` (that deadlocked the app and the
+            // system volume mixer in 0.8.2).
+            if event != MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA
+                && event != MF_MEDIA_ENGINE_EVENT_ENDED
+                && event != MF_MEDIA_ENGINE_EVENT_ERROR
+            {
+                return Ok(());
+            }
             {
                 let mut s = self.shared.lock();
                 if event == MF_MEDIA_ENGINE_EVENT_LOADEDMETADATA {
@@ -341,13 +353,16 @@ mod imp {
                             size[1]
                         ));
                     }
+                    // Ask the engine first, then lock: never call the engine while
+                    // holding `shared` (see EventNotify).
+                    let position = engine.GetCurrentTime();
                     let changed = {
                         let mut s = shared.lock();
                         s.status.native = native;
                         let changed =
                             s.status.playing != playing || s.status.has_video != has_video;
                         s.status.has_video = has_video;
-                        s.status.position = engine.GetCurrentTime();
+                        s.status.position = position;
                         s.status.duration = if d.is_finite() { d } else { 0.0 };
                         s.status.playing = playing;
                         changed

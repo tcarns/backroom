@@ -2,15 +2,16 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.8.2 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.8.3 (app and server).
 
 ## Waiting on the owner
-- **A friend's app crashes playing a video** (worked for the owner; friend was
-  on 0.7.1). Asked for Windows Reliability Monitor details (faulting module +
-  exception code) and the video. 0.8.1 now records crashes (app log + server
-  log on next start) and falls back to no-GPU decoding, then to the system
-  player. Next: read the report when it arrives; if it names a GPU driver,
-  suggest a driver update; if `backroom.exe`, it's ours.
+- **Video freeze (owner, 0.8.2)**: the app hung seconds into a video, with
+  the Windows volume mixer, with and without the graphics card. Cause: a
+  lock-order deadlock between the player thread and Media Foundation's
+  callback (see troubleshooting). Fixed in 0.8.3; not reproducible here (no
+  Windows audio), so the owner confirms on his machine and re-enables
+  "Use the graphics card for videos" (0.8.2 turned it off after the freeze).
+  The friend's earlier 0.7.1 "crash" may have been the same bug (unchecked).
 
 ## Workspace (since 2026-10-10)
 - Repo is in the project settings and the project uses the "TUFFcord" cloud
@@ -20,6 +21,9 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   `.exe` builds work there since `tools/setup.sh` builds Rust's missing Windows
   startup objects (2026-10-10); the app runs under Wine, audio plays.
 - `tools/setup.sh` only before building or testing (~5 min bare, all passing).
+
+## In 0.8.3
+- Video freeze fix above (`client/src/media.rs`).
 
 ## In 0.8.2
 - Chat messages get a subtle highlight under the pointer (Discord style).
