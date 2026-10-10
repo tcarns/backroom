@@ -2,11 +2,36 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.9.2 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.9.3 (app; server unchanged
+since 0.9.2 but released with it).
 
 ## Waiting on the owner
-- Nothing. Owner confirmed 0.9.2 on 2026-10-10 (panel resizing, channel
-  rename/delete menu, drag to reorder).
+- Confirm 0.9.3 on a real PC: video previews (new uploads, and older ones
+  once downloaded), middle-click auto scroll, button hover. Previews can't be
+  checked under Wine (it decodes no H.264), so they're unconfirmed.
+
+## In 0.9.3
+- Video previews (`client/src/posters.rs`, `media::is_dark`): posters already
+  existed since 0.7 (sender probes, uploads a JPEG, `Attachment.poster`). Cause
+  of the owner's black boxes not proven; likely a black first frame (fade-in,
+  or the source reader's first output after the seek) or a failed probe. Now:
+  the sender's probe skips near-black frames (up to ~2 s of video, then other
+  methods, keeping a black one only as a last resort); a received poster
+  that decodes near-black, a missing poster or one that can't be fetched
+  falls back to a frame taken from the cached clip (one job at a time),
+  saved as `<id>.jpg` in the cache; clips not downloaded yet are retried
+  when their download ends (preload or Play). Big clips not preloaded stay
+  black until played. Failures go to the log ("No preview frame ...").
+  Checked under Wine: good poster shows, black and missing posters trigger
+  the local attempt after preload (decoding itself fails there).
+- Middle-click auto scroll (`client/src/autoscroll.rs`): marker at the click,
+  speed grows with distance (12 px dead zone), stops on any click, Esc,
+  middle again, channel change, or letting go after hold-and-drag; off when
+  push-to-talk is the middle button. Stick-to-bottom is off while it runs
+  (it would undo scrolling up). Repaints only while on. Checked under Wine.
+- Mute, deafen, settings: `widgets::bar_button`, highlight mixed from the
+  bar color (the old `raised_2` fill was invisible in light themes) fading in
+  over 120 ms, icon brightens. Checked under Wine.
 
 ## In 0.9.2
 - Sidebar and member list widths: drag the edge between them and the chat

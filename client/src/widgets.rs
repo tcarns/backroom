@@ -149,6 +149,40 @@ pub(crate) fn icon_button(
     if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(9), pal().raised_2);
     }
+    paint_glyph(p, rect, glyph, crossed, color);
+    resp.on_hover_text(tip)
+}
+
+/// A button in the bar under the channel list (mute, deafen, settings): a
+/// soft highlight fades in under the pointer and the icon brightens. Tinted
+/// from the bar's own color so it shows in every theme.
+pub(crate) fn bar_button(
+    ui: &mut egui::Ui,
+    glyph: &str,
+    crossed: bool,
+    tip: &str,
+) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), Sense::click());
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+    let p = ui.painter();
+    if t > 0.0 {
+        let strength = if resp.is_pointer_button_down_on() {
+            0.16
+        } else {
+            0.10
+        };
+        let fill = theme::mix(pal().me_bg, pal().text, strength * t);
+        p.rect_filled(rect.shrink(1.0), CornerRadius::same(8), fill);
+    }
+    let color = theme::mix(pal().muted, pal().text, t);
+    paint_glyph(p, rect, glyph, crossed, color);
+    resp.on_hover_text(tip)
+}
+
+/// An icon centered in `rect`, red with a slash through it when `crossed`.
+fn paint_glyph(p: &egui::Painter, rect: egui::Rect, glyph: &str, crossed: bool, color: Color32) {
     let c = if crossed { pal().red } else { color };
     p.text(
         rect.center(),
@@ -166,7 +200,6 @@ pub(crate) fn icon_button(
             Stroke::new(2.2_f32, pal().red),
         );
     }
-    resp.on_hover_text(tip)
 }
 
 /// Paper-plane style send arrow, drawn so it doesn't depend on font glyphs.

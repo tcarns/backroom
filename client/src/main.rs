@@ -8,6 +8,7 @@
 mod accounts;
 mod attach;
 mod attach_ui;
+mod autoscroll;
 mod channels_ui;
 mod chat;
 mod chat_text;
@@ -15,6 +16,7 @@ mod dialogs;
 mod downloads;
 mod emoji_picker;
 mod members;
+mod posters;
 mod server_msgs;
 mod settings_window;
 mod sidebar;
@@ -343,6 +345,8 @@ struct App {
     /// Emoji picker: the tab shown (a group, or RECENT) and what's typed in its search.
     emoji_tab: u8,
     emoji_search: String,
+    /// Middle-click auto scroll in the chat.
+    autoscroll: autoscroll::AutoScroll,
 }
 
 /// The emoji picker's "recently used" tab.
@@ -418,6 +422,7 @@ impl App {
             confirm_delete: None,
             new_channel: Default::default(),
             channel_edit: Default::default(),
+            autoscroll: Default::default(),
             crash_report: None,
             startup_notice: None,
             settings_dirty: false,

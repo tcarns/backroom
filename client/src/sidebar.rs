@@ -2,7 +2,7 @@
 
 use crate::channels_ui::{self, ListActions};
 use crate::theme::pal;
-use crate::widgets::{icon_button, paint_avatar, panel_edge};
+use crate::widgets::{bar_button, icon_button, paint_avatar, panel_edge};
 use crate::{members, App, VolumePop};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Layout, Margin, RichText, Sense,
@@ -461,7 +461,7 @@ impl App {
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                if icon_button(ui, "⚙", false, pal().muted, "Settings").clicked() {
+                if bar_button(ui, "⚙", false, "Settings").clicked() {
                     self.settings_open = !self.settings_open;
                 }
                 let deaf_tip = if self.s.deafened {
@@ -469,19 +469,11 @@ impl App {
                 } else {
                     "Deafen"
                 };
-                if icon_button(ui, "🎧", self.s.deafened, pal().muted, deaf_tip).clicked() {
+                if bar_button(ui, "🎧", self.s.deafened, deaf_tip).clicked() {
                     self.toggle_deafen();
                 }
                 let muted = self.s.muted || self.s.deafened;
-                if icon_button(
-                    ui,
-                    "🎤",
-                    muted,
-                    pal().muted,
-                    if muted { "Unmute" } else { "Mute" },
-                )
-                .clicked()
-                {
+                if bar_button(ui, "🎤", muted, if muted { "Unmute" } else { "Mute" }).clicked() {
                     self.toggle_mute();
                 }
             });

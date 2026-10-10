@@ -93,6 +93,11 @@ pub(crate) enum Work {
         id: String,
         result: Result<PathBuf, String>,
     },
+    /// A video's preview frame taken on this PC (see `posters.rs`).
+    LocalPoster {
+        id: String,
+        result: Result<ColorImage, String>,
+    },
     Uploaded {
         job: u64,
         channel: String,
@@ -198,6 +203,12 @@ pub struct Attachments {
     pub(crate) no_preload: HashSet<String>,
     /// Most space downloaded files may use (Settings), checked after each download.
     pub cache_budget: u64,
+    /// Ids of video posters asked for (so they're checked for being all black).
+    pub(crate) posters: HashSet<String>,
+    /// Posters that came out all black: the clip's own frame is used instead.
+    pub(crate) dark_posters: HashSet<String>,
+    /// A clip's preview frame is being taken on this PC (one at a time).
+    pub(crate) local_poster_busy: bool,
 }
 
 /// Size an image or video is shown at, keeping its shape.
@@ -241,6 +252,9 @@ impl Attachments {
             preloads: HashSet::new(),
             no_preload: HashSet::new(),
             cache_budget: u64::MAX,
+            posters: HashSet::new(),
+            dark_posters: HashSet::new(),
+            local_poster_busy: false,
         }
     }
 
@@ -624,18 +638,12 @@ impl Attachments {
                 }
                 Work::Cancelled => self.preparing = self.preparing.saturating_sub(1),
                 Work::Thumb { id, result } => match result {
-                    Ok(img) => {
-                        let tex =
-                            ctx.load_texture(format!("img-{id}"), img, TextureOptions::LINEAR);
-                        self.images.insert(id.clone(), ImgState::Ready(tex));
-                        self.thumb_order.push_back(id);
-                        while self.thumb_order.len() > MAX_THUMBS {
-                            if let Some(old) = self.thumb_order.pop_front() {
-                                // Forget it entirely; it's asked for again if it scrolls back into view.
-                                self.images.remove(&old);
-                            }
-                        }
+                    Ok(img) if self.posters.contains(&id) && media::is_dark(img.as_raw()) => {
+                        self.dark_posters.insert(id.clone());
+                        self.images
+                            .insert(id, ImgState::Failed("The preview is all black.".into()));
                     }
+                    Ok(img) => self.keep_texture(ctx, id, img),
                     Err(e) => {
                         if !self.fall_back_to_websocket(&id, &e) {
                             tuffcord::applog::warn(format!("Couldn't show image {id}: {e}"));
@@ -711,6 +719,7 @@ impl Attachments {
                 }
                 Work::Fetched { id, result } => match result {
                     Ok(path) => {
+                        self.retry_local_poster(&id);
                         self.preloads.remove(&id);
                         let then = self.then.remove(&id).unwrap_or(Then::Nothing);
                         self.fetches.insert(id.clone(), Fetch::Ready(path.clone()));
@@ -729,6 +738,7 @@ impl Attachments {
                         self.fetches.insert(id, Fetch::Failed(e));
                     }
                 },
+                Work::LocalPoster { id, result } => self.local_poster_done(ctx, id, result),
                 Work::Uploaded {
                     job,
                     channel,
@@ -786,6 +796,20 @@ impl Attachments {
 }
 
 impl Attachments {
+    /// Show a decoded image (`id` is what `images` knows it by). Only the
+    /// newest few are kept; older ones are asked for again if they scroll
+    /// back into view.
+    pub(crate) fn keep_texture(&mut self, ctx: &egui::Context, id: String, img: ColorImage) {
+        let tex = ctx.load_texture(format!("img-{id}"), img, TextureOptions::LINEAR);
+        self.images.insert(id.clone(), ImgState::Ready(tex));
+        self.thumb_order.push_back(id);
+        while self.thumb_order.len() > MAX_THUMBS {
+            if let Some(old) = self.thumb_order.pop_front() {
+                self.images.remove(&old);
+            }
+        }
+    }
+
     /// Fetching an image over HTTP failed: ask for it the older way, over the
     /// chat connection (servers send images up to 16 MB that way). Returns
     /// false if that was already tried.
@@ -867,15 +891,23 @@ fn prepare_path(path: PathBuf, max: u64, any_files: bool) -> Result<Ready, Strin
         preview: None,
     };
     if matches!(kind, Kind::Video | Kind::Audio) {
-        if let Ok(p) = media::probe(&path) {
-            ready.width = p.width;
-            ready.height = p.height;
-            ready.duration_ms = p.duration_ms;
-            if let Some(img) = p.poster {
-                ready.poster = media::poster_jpeg(&img);
-                let small = image::DynamicImage::ImageRgba8(img).thumbnail(160, 160);
-                ready.preview = Some(images::to_color_image(&small));
+        match media::probe(&path) {
+            Ok(p) => {
+                ready.width = p.width;
+                ready.height = p.height;
+                ready.duration_ms = p.duration_ms;
+                if let Some(img) = p.poster {
+                    ready.poster = media::poster_jpeg(&img);
+                    let small = image::DynamicImage::ImageRgba8(img).thumbnail(160, 160);
+                    ready.preview = Some(images::to_color_image(&small));
+                } else if kind == Kind::Video {
+                    tuffcord::applog::warn(format!("No preview frame from {name}"));
+                }
             }
+            Err(e) if media::supported() => {
+                tuffcord::applog::warn(format!("Couldn't read {name} before sending: {e}"))
+            }
+            Err(_) => {}
         }
     }
     Ok(ready)

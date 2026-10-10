@@ -2,6 +2,12 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.9.3
+
+- Videos show a picture from the clip before you press Play instead of a black box. If the sender's app picked a black frame (a clip that fades in), TUFFcord now looks a little further in. Older videos without a picture get one once they're downloaded (clips up to 50 MB download by themselves when they show up); it's kept on your computer.
+- Middle-click in the chat to scroll automatically, like in a web browser: move the mouse above or below the marker to scroll that way, faster the further you go. Click, press Esc or middle-click again to stop. (Off when the middle mouse button is your push-to-talk key.)
+- The mute, deafen and settings buttons in the bottom left light up softly when you point at them.
+
 ## 0.9.2
 
 - Make the channel list or the member list wider or narrower: drag the line between it and the chat. TUFFcord remembers the widths on your computer.

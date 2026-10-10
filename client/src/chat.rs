@@ -54,12 +54,19 @@ impl App {
 
     pub(crate) fn messages(&mut self, ui: &mut egui::Ui) {
         let mut acts = Vec::new();
-        self.message_list(ui, &mut acts);
+        let scroll = self.auto_scroll(ui, ui.max_rect());
+        self.message_list(ui, scroll, &mut acts);
         let ctx = ui.ctx().clone();
         self.apply_acts(&ctx, acts);
     }
 
-    pub(crate) fn message_list(&self, ui: &mut egui::Ui, acts: &mut Vec<attach_ui::Act>) {
+    /// `scroll`: how far auto scroll moves the list this frame (positive: down).
+    pub(crate) fn message_list(
+        &self,
+        ui: &mut egui::Ui,
+        scroll: f32,
+        acts: &mut Vec<attach_ui::Act>,
+    ) {
         let Some(sess) = &self.session else { return };
         let msgs = sess
             .history
@@ -67,10 +74,17 @@ impl App {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
         egui::ScrollArea::vertical()
-            .stick_to_bottom(true)
+            // Sticking to the newest message would undo auto scroll upwards.
+            .stick_to_bottom(!self.autoscroll.active())
             .auto_shrink(false)
             .id_salt(&self.current_text)
             .show(ui, |ui| {
+                if scroll != 0.0 {
+                    ui.scroll_with_delta_animation(
+                        egui::vec2(0.0, -scroll),
+                        egui::style::ScrollAnimation::none(),
+                    );
+                }
                 ui.add_space(12.0);
                 if msgs.is_empty() {
                     ui.horizontal(|ui| {

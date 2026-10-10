@@ -25,6 +25,10 @@ pub enum Act {
     /// Fetch an image (or poster) shown at this size.
     Image(String, String, Vec2),
     Gif(Attachment, Vec2),
+    /// Fetch a video's poster (by its own id) shown at this size.
+    Poster(String, Vec2),
+    /// Take a video's preview frame from the clip itself (see `posters.rs`).
+    LocalPoster(Attachment, Vec2),
     View(Attachment),
     Play(Attachment),
     /// A clip came into view: download it ahead of time.
@@ -272,22 +276,12 @@ impl App {
         painter.rect_filled(rect, CornerRadius::same(8), Color32::BLACK);
 
         // Picture: the playing frame, else the poster.
-        let poster_tex = a
-            .poster
-            .as_ref()
-            .and_then(|p| match self.att.images.get(&p.id) {
-                Some(ImgState::Ready(t)) => Some(t),
-                _ => None,
-            });
         let frame_tex = playing.and_then(|p| p.frame.as_ref());
-        if let Some(t) = frame_tex.or(poster_tex) {
+        let visible = ui.is_rect_visible(rect);
+        if let Some(t) = frame_tex.or_else(|| self.video_poster(a, size, visible, acts)) {
             egui::Image::new((t.id(), size))
                 .corner_radius(CornerRadius::same(8))
                 .paint_at(ui, rect);
-        } else if let Some(p) = &a.poster {
-            if !self.att.images.contains_key(&p.id) && ui.is_rect_visible(rect) {
-                acts.push(Act::Image(p.id.clone(), "poster.jpg".into(), size));
-            }
         }
 
         if playing.is_none() && ui.is_rect_visible(rect) {
@@ -732,6 +726,12 @@ impl App {
                     self.att.request_image(&id, &name, size, ppp, &self.net)
                 }
                 Act::Gif(a, size) => self.att.request_gif(&a, size, ppp, &self.net),
+                Act::Poster(id, size) => {
+                    self.att.request_poster(&id);
+                    self.att
+                        .request_image(&id, "poster.jpg", size, ppp, &self.net)
+                }
+                Act::LocalPoster(a, size) => self.att.request_local_poster(&a, size, ppp),
                 Act::View(a) => self.att.open_viewer(&a, &self.net),
                 Act::Preload(a) => self.att.preload(&a),
                 Act::Play(a) => {

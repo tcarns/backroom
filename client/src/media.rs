@@ -46,7 +46,7 @@ pub use imp::{probe, Player};
 
 #[cfg(windows)]
 mod imp {
-    use super::{Probe, Status};
+    use super::{is_dark, Probe, Status};
     use crate::net::Wake;
     use eframe::egui::ColorImage;
     use parking_lot::Mutex;
@@ -650,6 +650,7 @@ mod imp {
         player.seek((st.duration / 3.0).min(1.0));
         player.set_size(size);
         let start = Instant::now();
+        let mut found = None;
         while start.elapsed() < Duration::from_secs(6) {
             if let Some(img) = player.take_frame() {
                 // Skip frames from before the seek: the engine may hand one over early.
@@ -659,16 +660,22 @@ mod imp {
                 let rgba: Vec<u8> = img.pixels.iter().flat_map(|c| c.to_array()).collect();
                 let poster =
                     image::RgbaImage::from_raw(img.size[0] as u32, img.size[1] as u32, rgba)?;
-                return Some(Probe {
-                    width: nw,
-                    height: nh,
-                    duration_ms: (st.duration * 1000.0) as u64,
-                    poster: Some(poster),
-                });
+                let dark = is_dark(poster.as_raw());
+                found = Some(poster);
+                if !dark {
+                    break;
+                }
+                // A black frame (fade-in): let it play on a little for a better one.
+                player.play();
             }
             std::thread::sleep(Duration::from_millis(15));
         }
-        None
+        Some(Probe {
+            width: nw,
+            height: nh,
+            duration_ms: (st.duration * 1000.0) as u64,
+            poster: Some(found?),
+        })
     }
 
     /// Size, length and a poster frame of a video (or the length of audio).
@@ -688,19 +695,32 @@ mod imp {
     unsafe fn probe_inner(path: &Path) -> windows::core::Result<Probe> {
         unsafe {
             // Windows' newer converter first (Windows 8 and later), then the older one.
-            let mut best = None;
+            // A black frame counts as a frame only when nothing better turns up.
+            let lit = |p: &Probe| p.poster.as_ref().is_some_and(|i| !is_dark(i.as_raw()));
+            let mut best: Option<windows::core::Result<Probe>> = None;
             for advanced in [true, false] {
                 match probe_with(path, advanced) {
-                    Ok(p) if p.poster.is_some() => return Ok(p),
-                    Ok(p) => best = best.or(Some(Ok(p))),
+                    Ok(p) if lit(&p) => return Ok(p),
+                    Ok(p) => {
+                        let better = match &best {
+                            Some(Ok(b)) => b.poster.is_none() && p.poster.is_some(),
+                            _ => true,
+                        };
+                        if better {
+                            best = Some(Ok(p));
+                        }
+                    }
                     Err(e) => best = best.or(Some(Err(e))),
                 }
             }
-            // Neither gave a frame: open it like the player does and take one.
+            // Neither gave a usable frame: open it like the player does and take one.
             if let Some(mut p) = capture_with_player(path) {
                 if let Some(Ok(b)) = &best {
                     if p.duration_ms == 0 {
                         p.duration_ms = b.duration_ms;
+                    }
+                    if !lit(&p) && b.poster.is_some() {
+                        return best.unwrap();
                     }
                 }
                 return Ok(p);
@@ -753,6 +773,10 @@ mod imp {
                 (*pv.Anonymous.Anonymous).Anonymous.hVal = 10_000_000; // 1 s
                 let _ = reader.SetCurrentPosition(&windows::core::GUID::zeroed(), &pv);
             }
+            // Black frames (a fade-in, or a decoder warming up) are passed over
+            // for up to about two seconds of video; the last one is kept if
+            // nothing better comes.
+            let mut dark = None;
             for _ in 0..60 {
                 let mut flags = 0u32;
                 let mut sample: Option<IMFSample> = None;
@@ -782,18 +806,26 @@ mod imp {
                     }
                 }
                 let _ = buffer.Unlock();
-                if ok {
-                    let img = match rotation {
-                        90 => image::imageops::rotate90(&img),
-                        180 => image::imageops::rotate180(&img),
-                        270 => image::imageops::rotate270(&img),
-                        _ => img,
-                    };
-                    probe.width = img.width();
-                    probe.height = img.height();
-                    probe.poster = Some(img);
+                if !ok {
+                    break;
                 }
+                let img = match rotation {
+                    90 => image::imageops::rotate90(&img),
+                    180 => image::imageops::rotate180(&img),
+                    270 => image::imageops::rotate270(&img),
+                    _ => img,
+                };
+                if is_dark(img.as_raw()) {
+                    dark = Some(img);
+                    continue;
+                }
+                dark = Some(img);
                 break;
+            }
+            if let Some(img) = dark {
+                probe.width = img.width();
+                probe.height = img.height();
+                probe.poster = Some(img);
             }
             if probe.poster.is_none() {
                 let (pw, ph) = if rotation == 90 || rotation == 270 {
@@ -807,6 +839,25 @@ mod imp {
             Ok(probe)
         }
     }
+}
+
+/// Is this picture (RGBA bytes) nearly all black? Such a frame (a fade-in,
+/// or a decoder that hasn't got going) makes a poor preview.
+pub fn is_dark(rgba: &[u8]) -> bool {
+    let pixels = rgba.len() / 4;
+    if pixels == 0 {
+        return true;
+    }
+    // A few thousand pixels spread over the picture are plenty.
+    let step = (pixels / 4000).max(1);
+    let (mut seen, mut lit) = (0usize, 0usize);
+    for px in rgba.chunks_exact(4).step_by(step) {
+        seen += 1;
+        if px[0].max(px[1]).max(px[2]) > 28 {
+            lit += 1;
+        }
+    }
+    lit * 50 < seen
 }
 
 // ---------------------------------------------------------------- elsewhere
@@ -858,4 +909,24 @@ pub fn poster_jpeg(img: &image::RgbaImage) -> Option<Vec<u8>> {
         .encode_image(&small)
         .ok()?;
     (out.len() as u64 <= proto::files::MAX_POSTER).then_some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn black_frames_are_dark_and_pictures_are_not() {
+        let black = image::RgbaImage::from_pixel(64, 36, image::Rgba([6, 4, 8, 255]));
+        assert!(is_dark(black.as_raw()));
+        // A dark scene with a lit corner (a game's HUD) still counts as a picture.
+        let mut hud = black.clone();
+        for y in 0..10 {
+            for x in 0..10 {
+                hud.put_pixel(x, y, image::Rgba([200, 200, 200, 255]));
+            }
+        }
+        assert!(!is_dark(hud.as_raw()));
+        assert!(is_dark(&[]));
+    }
 }
