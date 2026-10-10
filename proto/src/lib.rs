@@ -108,6 +108,28 @@ pub enum ClientMsg {
         #[serde(default)]
         voice: bool,
     },
+    /// Admins: rename a channel. Servers with [`FEATURE_CHANNEL_EDIT`] only.
+    RenameChannel {
+        name: String,
+        to: String,
+        #[serde(default)]
+        voice: bool,
+    },
+    /// Admins: delete a channel (a text channel's messages and files too).
+    /// Servers with [`FEATURE_CHANNEL_EDIT`] only.
+    DeleteChannel {
+        name: String,
+        #[serde(default)]
+        voice: bool,
+    },
+    /// Admins: move a channel to `index` in its list. Servers with
+    /// [`FEATURE_CHANNEL_EDIT`] only.
+    MoveChannel {
+        name: String,
+        #[serde(default)]
+        voice: bool,
+        index: usize,
+    },
 }
 
 /// A finished upload to attach to a message, with what the sender's app
@@ -389,11 +411,24 @@ pub enum ServerMsg {
         channel: String,
         id: String,
     },
-    /// The channel lists changed (an admin added one).
+    /// The channel lists changed (an admin added, renamed, deleted or moved one).
     Channels {
         text_channels: Vec<String>,
         voice_channels: Vec<String>,
+        /// Set when a channel was renamed, so apps carry its messages over.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        renamed: Option<ChannelRenamed>,
     },
+}
+
+/// A channel's old and new name (see [`ServerMsg::Channels`]).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelRenamed {
+    pub from: String,
+    pub to: String,
+    #[serde(default)]
+    pub voice: bool,
 }
 
 /// The server has accounts.
@@ -421,6 +456,9 @@ pub const FEATURE_ATTACHMENTS: &str = "attachments";
 pub const FEATURE_FILES: &str = "files";
 /// Admins can add channels from the app ([`ClientMsg::CreateChannel`]).
 pub const FEATURE_CHANNELS: &str = "channels";
+/// Admins can rename, delete and reorder channels ([`ClientMsg::RenameChannel`],
+/// [`ClientMsg::DeleteChannel`], [`ClientMsg::MoveChannel`]).
+pub const FEATURE_CHANNEL_EDIT: &str = "channelEdit";
 
 // ---------------------------------------------------------------- voice frames
 

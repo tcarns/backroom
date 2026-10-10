@@ -10,6 +10,10 @@ pub const DEFAULT_MEDIA_LEVEL: f32 = 0.5;
 pub const DEFAULT_PRELOAD_MB: u32 = 50;
 /// Space kept for downloaded files (played, opened or preloaded).
 pub const DEFAULT_CACHE_MB: u32 = 2048;
+/// Channel sidebar width: (narrowest, default, widest), logical pixels.
+pub const SIDEBAR_WIDTH: (f32, f32, f32) = (200.0, 270.0, 420.0);
+/// Member list width: (narrowest, default, widest).
+pub const MEMBERS_WIDTH: (f32, f32, f32) = (180.0, 240.0, 400.0);
 pub const MIN_CACHE_MB: u32 = 256;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -76,6 +80,9 @@ pub struct Settings {
     pub preload_mb: u32,
     /// Most space downloaded files may use, in MB (oldest go first).
     pub cache_mb: u32,
+    /// Widths of the channel sidebar and the member list, dragged by their edges.
+    pub sidebar_width: f32,
+    pub members_width: f32,
 }
 
 /// The main window's last place on screen, in logical pixels.
@@ -121,6 +128,8 @@ impl Default for Settings {
             window: None,
             preload_mb: DEFAULT_PRELOAD_MB,
             cache_mb: DEFAULT_CACHE_MB,
+            sidebar_width: SIDEBAR_WIDTH.1,
+            members_width: MEMBERS_WIDTH.1,
         }
     }
 }

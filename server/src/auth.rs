@@ -7,7 +7,9 @@
 use crate::accounts::{self, Store};
 use crate::{config, leave_voice, now_ms, Shared, State};
 use proto::{Account, AccountSummary, AdminAction, Auth, Member, ServerMsg, FEATURE_ACCOUNTS};
-use proto::{FEATURE_ATTACHMENTS, FEATURE_CHANNELS, FEATURE_FILES, PROTOCOL_VERSION};
+use proto::{
+    FEATURE_ATTACHMENTS, FEATURE_CHANNELS, FEATURE_CHANNEL_EDIT, FEATURE_FILES, PROTOCOL_VERSION,
+};
 use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -224,6 +226,7 @@ impl State {
                 FEATURE_ACCOUNTS.to_string(),
                 FEATURE_FILES.to_string(),
                 FEATURE_CHANNELS.to_string(),
+                FEATURE_CHANNEL_EDIT.to_string(),
             ],
             max_attachment_bytes: self.cfg.max_attachment_bytes,
             account: Some(me),

@@ -125,6 +125,7 @@ impl App {
                     users,
                     members,
                     add_channels: features.iter().any(|f| f == proto::FEATURE_CHANNELS),
+                    edit_channels: features.iter().any(|f| f == proto::FEATURE_CHANNEL_EDIT),
                 });
                 self.conn = Conn::Online;
                 self.login_error = None;
@@ -208,6 +209,10 @@ impl App {
                 self.follow_renames();
             }
             ServerMsg::VoiceJoined { channel } => {
+                // Already there: the channel was renamed (servers send this for older apps).
+                if self.voice_channel.as_deref() == Some(channel.as_str()) {
+                    return;
+                }
                 self.joining = None;
                 self.voice_channel = Some(channel);
                 self.ctl.in_voice.store(true, Ordering::Relaxed);
@@ -290,7 +295,8 @@ impl App {
             ServerMsg::Channels {
                 text_channels,
                 voice_channels,
-            } => self.on_channels(text_channels, voice_channels),
+                renamed,
+            } => self.on_channels(text_channels, voice_channels, renamed),
             ServerMsg::Restarting { version } => self.server_restarting = Some(version),
             m @ (ServerMsg::AccountUpdated { .. }
             | ServerMsg::Accounts { .. }

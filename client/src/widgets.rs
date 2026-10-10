@@ -5,6 +5,51 @@ use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, RichText, Sense,
 
 // ---------------------------------------------------------------- drawing helpers
 
+/// The draggable edge of a side panel (`panel`, on the left of the window or
+/// the right): a thin line lights up on hover, dragging sets `width` within
+/// `min..=max`. Returns true when a drag ends. Call after all panels are
+/// shown, so the edge wins over what's under it.
+pub(crate) fn panel_edge(
+    ctx: &egui::Context,
+    panel: egui::Rect,
+    left: bool,
+    width: &mut f32,
+    (min, max): (f32, f32),
+) -> bool {
+    let id = egui::Id::new(("panel_edge", left));
+    let x = if left { panel.right() } else { panel.left() };
+    let ui = egui::Ui::new(
+        ctx.clone(),
+        id,
+        egui::UiBuilder::new()
+            .layer_id(egui::LayerId::background())
+            .max_rect(ctx.screen_rect()),
+    );
+    let grab = egui::Rect::from_x_y_ranges(x - 3.0..=x + 3.0, panel.y_range());
+    let resp = ui.interact(grab, id.with("grab"), Sense::drag());
+    if resp.hovered() || resp.dragged() {
+        ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        let color = if resp.dragged() {
+            pal().accent
+        } else {
+            theme::mix(pal().line, pal().accent, 0.5)
+        };
+        ui.painter()
+            .vline(x, panel.y_range(), Stroke::new(2.0_f32, color));
+    }
+    if resp.dragged() {
+        if let Some(p) = ctx.pointer_latest_pos() {
+            let w = if left {
+                p.x - panel.left()
+            } else {
+                panel.right() - p.x
+            };
+            *width = w.clamp(min, max.max(min)).round();
+        }
+    }
+    resp.drag_stopped()
+}
+
 pub(crate) fn hsl(h: f32, s: f32, l: f32) -> Color32 {
     let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
     let hp = (h / 60.0) % 6.0;

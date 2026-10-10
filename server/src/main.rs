@@ -347,6 +347,13 @@ fn handle_text(shared: &Shared, id: u32, text: &str) -> Option<ClientMsg> {
             id: msg_id,
         } => delete_message(&mut st, id, &channel, &msg_id),
         ClientMsg::CreateChannel { name, voice } => channels::create(&mut st, id, &name, voice),
+        ClientMsg::RenameChannel { name, to, voice } => {
+            channels::rename(&mut st, id, &name, &to, voice)
+        }
+        ClientMsg::DeleteChannel { name, voice } => channels::delete(&mut st, id, &name, voice),
+        ClientMsg::MoveChannel { name, voice, index } => {
+            channels::move_to(&mut st, id, &name, voice, index)
+        }
     }
     None
 }

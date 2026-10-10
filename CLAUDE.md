@@ -42,7 +42,7 @@ home must keep working.
   check, verified download, exe swap.
 - `server/src/` tokio current_thread. `main.rs` state, message handling, chat,
   voice relay, console commands, `delete_message`; `auth.rs` sign-in, admin
-  actions; `channels.rs` admins adding channels; `accounts.rs` storage (argon2); `files.rs` HTTP endpoints on the same
+  actions; `channels.rs` admins adding, renaming, deleting, reordering channels; `accounts.rs` storage (argon2); `files.rs` HTTP endpoints on the same
   port (POST/PUT/GET /files, Range, chunked bodies); `selfupdate.rs` watcher +
   updater; `config.rs` settings file and its upgrades; `log.rs`.
 - `client/src/` egui 0.32 (glow). The `App` struct is split across files,
@@ -57,7 +57,7 @@ home must keep working.
     shared drawing helpers (avatars, buttons, colors, time labels).
   - `accounts.rs` sign-in screen and account UI; `attach.rs` + `attach_ui.rs`
     attachments and players; `downloads.rs` cache downloads, preloading;
-    `volume_ui.rs` speaker button and volume popup; `channels_ui.rs` adding channels;
+    `volume_ui.rs` speaker button and volume popup; `channels_ui.rs` channel admin (+, right-click menu, drag to reorder);
     `members.rs`; `chat_text.rs`; `theme.rs`.
   - Library (`lib.rs`, shared with `bin/bot.rs`, no UI): `media.rs` Media
     Foundation player (Windows only); `crash.rs`; `net.rs`, `voice.rs`,

@@ -1,8 +1,9 @@
 //! The main screen layout and the left sidebar: channel lists, voice panel, own user row.
 
+use crate::channels_ui::{self, ListActions};
 use crate::theme::pal;
-use crate::widgets::{icon_button, paint_avatar};
-use crate::{channels_ui, members, App, VolumePop};
+use crate::widgets::{icon_button, paint_avatar, panel_edge};
+use crate::{members, App, VolumePop};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Layout, Margin, RichText, Sense,
     Stroke,
@@ -11,6 +12,7 @@ use proto::ClientMsg;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tuffcord::keys::{self};
+use tuffcord::settings::{MEMBERS_WIDTH, SIDEBAR_WIDTH};
 
 impl App {
     pub(crate) fn main_screen(&mut self, ctx: &egui::Context) {
@@ -23,11 +25,13 @@ impl App {
             }
             s
         };
-        self.sidebar(ctx, &speaking);
-        self.member_panel(ctx, &speaking);
+        let side = self.sidebar(ctx, &speaking);
+        let members = self.member_panel(ctx, &speaking);
         self.chat(ctx);
+        self.panel_edges(ctx, side, members);
         self.confirm_open_dialog(ctx);
         self.confirm_delete_dialog(ctx);
+        self.confirm_channel_delete(ctx);
         self.volume_popup(ctx);
         self.emoji_picker(ctx);
         self.image_viewer(ctx);
@@ -37,9 +41,29 @@ impl App {
         }
     }
 
-    pub(crate) fn sidebar(&mut self, ctx: &egui::Context, speaking: &HashSet<u32>) {
+    /// Dragging the edges of the sidebar and the member list (widths saved
+    /// in this app's settings only). The chat keeps at least `MIN_CHAT`.
+    fn panel_edges(&mut self, ctx: &egui::Context, side: egui::Rect, members: Option<egui::Rect>) {
+        const MIN_CHAT: f32 = 360.0;
+        let screen = ctx.screen_rect().width();
+        let members_w = members.map_or(0.0, |r| r.width());
+        let (min, _, max) = SIDEBAR_WIDTH;
+        let max = max.min(screen - members_w - MIN_CHAT);
+        let mut done = panel_edge(ctx, side, true, &mut self.s.sidebar_width, (min, max));
+        if let Some(r) = members {
+            let (min, _, max) = MEMBERS_WIDTH;
+            let max = max.min(screen - side.width() - MIN_CHAT);
+            done |= panel_edge(ctx, r, false, &mut self.s.members_width, (min, max));
+        }
+        if done {
+            self.s.save();
+        }
+    }
+
+    pub(crate) fn sidebar(&mut self, ctx: &egui::Context, speaking: &HashSet<u32>) -> egui::Rect {
+        let (min, _, max) = SIDEBAR_WIDTH;
         egui::SidePanel::left("sidebar")
-            .exact_width(270.0)
+            .exact_width(self.s.sidebar_width.clamp(min, max))
             .resizable(false)
             .frame(Frame::new().fill(pal().bg_deep))
             .show(ctx, |ui| {
@@ -82,7 +106,9 @@ impl App {
                             .auto_shrink(false)
                             .show(ui, |ui| self.channel_lists(ui, speaking));
                     });
-            });
+            })
+            .response
+            .rect
     }
 
     pub(crate) fn row(
@@ -90,11 +116,20 @@ impl App {
         height: f32,
         selected: bool,
     ) -> (egui::Rect, egui::Response) {
-        let (rect, resp) =
-            ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
+        Self::row_sense(ui, height, selected, Sense::click())
+    }
+
+    /// A row that can also be dragged (`Sense::click_and_drag`), for channels admins reorder.
+    pub(crate) fn row_sense(
+        ui: &mut egui::Ui,
+        height: f32,
+        selected: bool,
+        sense: Sense,
+    ) -> (egui::Rect, egui::Response) {
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), sense);
         let fill = if selected {
             pal().raised_2
-        } else if resp.hovered() {
+        } else if resp.hovered() || resp.dragged() {
             pal().raised
         } else {
             Color32::TRANSPARENT
@@ -104,23 +139,59 @@ impl App {
     }
 
     pub(crate) fn channel_lists(&mut self, ui: &mut egui::Ui, speaking: &HashSet<u32>) {
-        let can_add = self.is_admin() && self.session.as_ref().is_some_and(|s| s.add_channels);
+        let admin = self.is_admin();
         let Some(sess) = &self.session else { return };
-        let mut select_text: Option<String> = None;
-        let mut create: Option<(String, bool)> = None;
-        let mut join: Option<String> = None;
-        let mut open_pop: Option<VolumePop> = None;
-
-        create = create.or(channels_ui::header(
+        let can_add = admin && sess.add_channels;
+        let can_edit = admin && sess.edit_channels;
+        let mut act = ListActions::default();
+        act.create = channels_ui::header(ui, false, can_add, &mut self.new_channel);
+        self.text_list(ui, can_edit, &mut act);
+        act.create = act.create.or(channels_ui::header(
             ui,
-            false,
+            true,
             can_add,
             &mut self.new_channel,
         ));
-        for ch in &sess.text_channels {
+        self.voice_list(ui, speaking, can_edit, &mut act);
+        ui.add_space(12.0);
+
+        if let Some(ch) = act.select_text {
+            self.select_text_channel(ch);
+        }
+        if let Some((name, voice)) = act.create {
+            self.net.send(ClientMsg::CreateChannel { name, voice });
+        }
+        if let Some((voice, name, to)) = act.rename {
+            self.net.send(ClientMsg::RenameChannel { name, to, voice });
+        }
+        if let Some((voice, name, index)) = act.move_to {
+            self.move_channel(voice, name, index);
+        }
+        if let Some(ch) = act.join {
+            self.join_voice(ch);
+        }
+        if let Some(p) = act.open_pop {
+            self.pop = Some(p);
+        }
+    }
+
+    fn text_list(&mut self, ui: &mut egui::Ui, can_edit: bool, act: &mut ListActions) {
+        let Some(sess) = &self.session else { return };
+        let sense = if can_edit {
+            Sense::click_and_drag()
+        } else {
+            Sense::click()
+        };
+        let mut rows = Vec::new();
+        for (i, ch) in sess.text_channels.iter().enumerate() {
+            if let Some(r) = channels_ui::rename_box(ui, &mut self.channel_edit, false, ch, act) {
+                rows.push(r);
+                continue;
+            }
             let selected = *ch == self.current_text;
             let unread = self.unread.contains(ch);
-            let (rect, resp) = Self::row(ui, 30.0, selected);
+            let (rect, resp) = Self::row_sense(ui, 30.0, selected, sense);
+            rows.push(rect);
             let p = ui.painter();
             p.text(
                 rect.left_center() + egui::vec2(12.0, 0.0),
@@ -134,76 +205,93 @@ impl App {
             } else {
                 pal().muted
             };
-            let font = if unread {
-                FontId::new(15.0, egui::FontFamily::Proportional)
-            } else {
-                FontId::proportional(15.0)
-            };
             p.text(
                 rect.left_center() + egui::vec2(32.0, 0.0),
                 Align2::LEFT_CENTER,
                 ch,
-                font,
+                FontId::proportional(15.0),
                 color,
             );
             if unread {
                 p.circle_filled(rect.right_center() - egui::vec2(12.0, 0.0), 3.5, pal().text);
             }
             if resp.clicked() {
-                select_text = Some(ch.clone());
+                act.select_text = Some(ch.clone());
+            }
+            if can_edit {
+                channels_ui::row_admin(&resp, &mut self.channel_edit, false, ch, i);
             }
         }
+        let end = ui.cursor().top();
+        channels_ui::drop_target(ui, &mut self.channel_edit, false, &rows, end, act);
+    }
 
-        create = create.or(channels_ui::header(
-            ui,
-            true,
-            can_add,
-            &mut self.new_channel,
-        ));
-        for ch in &sess.voice_channels {
+    fn voice_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        speaking: &HashSet<u32>,
+        can_edit: bool,
+        act: &mut ListActions,
+    ) {
+        let Some(sess) = &self.session else { return };
+        let sense = if can_edit {
+            Sense::click_and_drag()
+        } else {
+            Sense::click()
+        };
+        let mut rows = Vec::new();
+        for (i, ch) in sess.voice_channels.iter().enumerate() {
             let here = self.voice_channel.as_deref() == Some(ch.as_str());
             let members = sess.members(ch);
-            let (rect, resp) = Self::row(ui, 30.0, false);
-            let p = ui.painter();
-            p.text(
-                rect.left_center() + egui::vec2(10.0, 0.0),
-                Align2::LEFT_CENTER,
-                "🔊",
-                FontId::proportional(14.0),
-                if here { pal().accent } else { pal().faint },
-            );
-            p.text(
-                rect.left_center() + egui::vec2(32.0, 0.0),
-                Align2::LEFT_CENTER,
-                ch,
-                FontId::proportional(15.0),
-                if here { pal().text } else { pal().muted },
-            );
-            if members.len() >= sess.max_per_voice {
-                p.text(
-                    rect.right_center() - egui::vec2(10.0, 0.0),
-                    Align2::RIGHT_CENTER,
-                    "Full",
-                    FontId::proportional(12.0),
-                    pal().faint,
-                );
-            }
-            if self.joining.as_deref() == Some(ch.as_str()) {
-                p.text(
-                    rect.right_center() - egui::vec2(10.0, 0.0),
-                    Align2::RIGHT_CENTER,
-                    "Joining…",
-                    FontId::proportional(12.0),
-                    pal().accent,
-                );
-            }
-            let resp = resp.on_hover_text(if here {
-                format!("You're in {ch}")
+            if let Some(r) = channels_ui::rename_box(ui, &mut self.channel_edit, true, ch, act) {
+                rows.push(r);
             } else {
-                format!("Join {ch}")
-            });
-            if resp.clicked() && !here {
-                join = Some(ch.clone());
+                let (rect, resp) = Self::row_sense(ui, 30.0, false, sense);
+                rows.push(rect);
+                let p = ui.painter();
+                p.text(
+                    rect.left_center() + egui::vec2(10.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    "🔊",
+                    FontId::proportional(14.0),
+                    if here { pal().accent } else { pal().faint },
+                );
+                p.text(
+                    rect.left_center() + egui::vec2(32.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    ch,
+                    FontId::proportional(15.0),
+                    if here { pal().text } else { pal().muted },
+                );
+                if members.len() >= sess.max_per_voice {
+                    p.text(
+                        rect.right_center() - egui::vec2(10.0, 0.0),
+                        Align2::RIGHT_CENTER,
+                        "Full",
+                        FontId::proportional(12.0),
+                        pal().faint,
+                    );
+                }
+                if self.joining.as_deref() == Some(ch.as_str()) {
+                    p.text(
+                        rect.right_center() - egui::vec2(10.0, 0.0),
+                        Align2::RIGHT_CENTER,
+                        "Joining…",
+                        FontId::proportional(12.0),
+                        pal().accent,
+                    );
+                }
+                if can_edit {
+                    channels_ui::row_admin(&resp, &mut self.channel_edit, true, ch, i);
+                }
+                let resp = resp.on_hover_text(if here {
+                    format!("You're in {ch}")
+                } else {
+                    format!("Join {ch}")
+                });
+                if resp.clicked() && !here {
+                    act.join = Some(ch.clone());
+                }
             }
             for m in members {
                 let is_me = m.id == sess.me_id;
@@ -265,7 +353,7 @@ impl App {
                     if !is_me {
                         let resp = resp.on_hover_text(format!("Volume for {}", m.name));
                         if resp.clicked() {
-                            open_pop = Some(VolumePop {
+                            act.open_pop = Some(VolumePop {
                                 name: m.name.clone(),
                                 account: m.account,
                                 pos: rect.right_top() + egui::vec2(8.0, 0.0),
@@ -276,21 +364,8 @@ impl App {
                 });
             }
         }
-
-        ui.add_space(12.0);
-
-        if let Some(ch) = select_text {
-            self.select_text_channel(ch);
-        }
-        if let Some((name, voice)) = create {
-            self.net.send(ClientMsg::CreateChannel { name, voice });
-        }
-        if let Some(ch) = join {
-            self.join_voice(ch);
-        }
-        if let Some(p) = open_pop {
-            self.pop = Some(p);
-        }
+        let end = ui.cursor().top();
+        channels_ui::drop_target(ui, &mut self.channel_edit, true, &rows, end, act);
     }
 
     pub(crate) fn select_text_channel(&mut self, ch: String) {

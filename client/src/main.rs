@@ -194,6 +194,8 @@ struct Session {
     members: Vec<Member>,
     /// Admins can add channels (newer servers).
     add_channels: bool,
+    /// Admins can rename, delete and reorder channels (server 0.9.2+).
+    edit_channels: bool,
 }
 
 impl Session {
@@ -328,6 +330,7 @@ struct App {
     /// "Delete message?" waiting for an answer (admins).
     confirm_delete: Option<proto::ChatMessage>,
     new_channel: channels_ui::NewChannel,
+    channel_edit: channels_ui::ChannelEdit,
     /// How the last run crashed, for the server's log once signed in.
     crash_report: Option<String>,
     /// Shown again once signed in (see `startup_notice`).
@@ -414,6 +417,7 @@ impl App {
             confirm_open: None,
             confirm_delete: None,
             new_channel: Default::default(),
+            channel_edit: Default::default(),
             crash_report: None,
             startup_notice: None,
             settings_dirty: false,

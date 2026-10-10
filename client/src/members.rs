@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, HashSet};
 
 /// Narrower windows hide the list (the button still shows it).
 pub const MIN_WINDOW: f32 = 900.0;
-const WIDTH: f32 = 240.0;
 const SLIDE_SECS: f32 = 0.15;
 
 struct Row {
@@ -63,7 +62,12 @@ impl App {
         self.s.show_members && ctx.screen_rect().width() >= MIN_WINDOW && self.session.is_some()
     }
 
-    pub fn member_panel(&mut self, ctx: &egui::Context, speaking: &HashSet<u32>) {
+    /// The member list; returns its area once fully open (for the drag edge).
+    pub fn member_panel(
+        &mut self,
+        ctx: &egui::Context,
+        speaking: &HashSet<u32>,
+    ) -> Option<egui::Rect> {
         // Slides open and shut; repaints only while it moves.
         let t = ctx.animate_bool_with_time_and_easing(
             egui::Id::new("members_open"),
@@ -72,9 +76,11 @@ impl App {
             egui::emath::easing::cubic_out,
         );
         if t <= 0.0 {
-            return;
+            return None;
         }
-        let Some(sess) = &self.session else { return };
+        let Some(sess) = &self.session else {
+            return None;
+        };
 
         // Who's in which voice channel, by session id.
         let mut in_voice: BTreeMap<u32, (String, bool, bool)> = BTreeMap::new();
@@ -146,8 +152,10 @@ impl App {
 
         let mut open_pop: Option<VolumePop> = None;
         let bg = theme::mix(pal().bg, pal().bg_deep, 0.55);
-        egui::SidePanel::right("members")
-            .exact_width(WIDTH * t)
+        let (min, _, max) = tuffcord::settings::MEMBERS_WIDTH;
+        let width = self.s.members_width.clamp(min, max);
+        let panel = egui::SidePanel::right("members")
+            .exact_width(width * t)
             .resizable(false)
             .frame(Frame::new().fill(bg).inner_margin(Margin {
                 left: 10,
@@ -158,7 +166,7 @@ impl App {
             .show(ctx, |ui| {
                 // Lay the list out at full width while it slides; the panel clips the rest.
                 let mut full = ui.max_rect();
-                full.set_width(full.width() + WIDTH * (1.0 - t));
+                full.set_width(full.width() + width * (1.0 - t));
                 ui.scope_builder(egui::UiBuilder::new().max_rect(full), |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink(false)
@@ -284,12 +292,15 @@ impl App {
                             ui.add_space(8.0);
                         });
                 });
-            });
+            })
+            .response
+            .rect;
         if let Some(mut p) = open_pop {
             // Open to the left of the list.
             p.pos.x -= 250.0;
             self.pop = Some(p);
         }
+        (t >= 1.0).then_some(panel)
     }
 
     /// The people button in the chat header.

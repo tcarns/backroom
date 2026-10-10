@@ -2,12 +2,28 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.9.1 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.9.2 (app and server).
 
 ## Waiting on the owner
-- Nothing. Owner confirmed on 2026-10-10: adding channels works, the member
-  list animation works, and the window kept its size and place through the
-  0.9.0 to 0.9.1 update.
+- Try 0.9.2 on the PC: drag the sidebar and member list edges, right-click a
+  channel (rename, delete), drag channels into a new order. Server must be 0.9.2.
+
+## In 0.9.2
+- Sidebar and member list widths: drag the edge between them and the chat
+  (`widgets::panel_edge`, called last in `main_screen` so it wins the hit
+  test; line lights up on hover, accent while dragging). Saved in
+  `Settings.sidebar_width` / `members_width` (200-420 / 180-400, chat keeps
+  360) when the drag ends. Client only.
+- Admins (feature `"channelEdit"`): right-click a channel for Rename (box in
+  place of the row, Enter/Esc) and Delete (confirm dialog); drag a channel
+  within its list to reorder, applied locally at once and sent as
+  `moveChannel`. Server (`server/src/channels.rs`): admin checked per
+  account, rename moves history (and `message.channel`) and people in voice
+  (`Channels.renamed` for new apps, `VoiceJoined` for 0.9.1 apps), delete
+  removes a text channel's messages and files or moves people out of voice,
+  the last channel of a kind can't be deleted, all saved via
+  `config::save_channels`. Checked: `tests/test_channels.py` (29 checks),
+  Wine screenshots of every step.
 
 ## In 0.9.1
 - Admins add text and voice channels from the app: "+" by each list heading
@@ -17,8 +33,7 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   settings file (`config::save_channels`, keeps other lines; creates the
   default file when there's none) and sends `Channels` to everyone. New
   protocol: `createChannel`, `channels`, feature `"channels"` (older servers
-  don't show the "+"). The creator's app opens the new text channel. Not in
-  the app: rename, delete, reorder. Checked: `tests/test_channels.py`, unit
+  don't show the "+"). The creator's app opens the new text channel. Checked: `tests/test_channels.py`, unit
   test for the file rewrite, Wine screenshots, owner's PC.
 - Member list slides open/shut in 150 ms (`members.rs`, laid out at full
   width and clipped while it moves); repaints only during the slide.

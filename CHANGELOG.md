@@ -2,6 +2,13 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.9.2
+
+- Make the channel list or the member list wider or narrower: drag the line between it and the chat. TUFFcord remembers the widths on your computer.
+- Admins can right-click a channel to rename or delete it. Renaming keeps its messages, and anyone in a renamed voice channel stays connected. Deleting asks first; a deleted text channel's messages and files are gone for everyone.
+- Admins can drag channels up and down to change their order for everyone.
+- The server needs 0.9.2 for renaming, deleting and reordering.
+
 ## 0.9.1
 
 - Admins can add channels: click the + next to "Text channels" or "Voice channels", type a name and press Enter. Everyone sees the new channel right away, and it stays after the server restarts. (The server needs 0.9.1 too.)
