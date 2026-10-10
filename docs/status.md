@@ -12,12 +12,18 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   player. Next: read the report when it arrives; if it names a GPU driver,
   suggest a driver update; if `backroom.exe`, it's ours.
 
-## Check early next session (new, not yet seen working)
-- The SessionStart hook (`.claude/settings.json`) running `tools/doctor.sh`:
-  `doctor:` lines should appear at the start; if not, run it by hand and fix.
-  It only fires when the session starts inside the repo, which needs the repo
-  in the project's settings (added 2026-10-10; first new thread will show it).
+## Workspace (since 2026-10-10)
+- Repo is in the project settings and the project uses the "TUFFcord" cloud
+  environment, whose setup script installs the toolchain before a thread starts
+  (source: `analysis/cloud-env-setup.sh` in the project files). A check thread
+  confirmed: auto clone, tools present, CLAUDE.md loaded, doctor ran. Not yet
+  seen: a Windows build there (`tools/windows.sh check`).
+- `tools/setup.sh` only before building or testing (~5 min bare, all passing).
+
+## Check early next session
 - `tests/run.py --compat` in the Release workflow: first runs on the next release.
+- Small fix pending: when `gh api` is refused, `tools/doctor.sh` prints GitHub's
+  JSON error into its status line; send gh's errors to /dev/null and print `?`.
 
 ## Planned, in order
 1. Hosting on a rented Linux server (owner's choice: small x86 VPS near the
@@ -32,8 +38,9 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 
 ## Undecided options (from the efficiency review)
 Full review with token estimates: `analysis/token-efficiency-review.md` in the
-project files (2026-10-10). Recommended there: split client `main.rs` now, server
-later if it grows; revisit H after the setup changes.
+project files (2026-10-10). Recommended there: split client `main.rs` now (scripted
+moves, no behavior change, before the admin-settings UI), server later if it
+grows. Owner wants to revisit H next, now that the setup changes are done.
 
 - C: support only current + previous version; drop pre-0.7 compatibility code.
 - D: split client `main.rs` (3.3k lines) and server `main.rs` into modules.
