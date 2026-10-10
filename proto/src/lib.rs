@@ -101,6 +101,13 @@ pub enum ClientMsg {
         text: String,
         files: Vec<PostFile>,
     },
+    /// Admins: add a text channel (or a voice channel when `voice`). Servers
+    /// with [`FEATURE_CHANNELS`] only.
+    CreateChannel {
+        name: String,
+        #[serde(default)]
+        voice: bool,
+    },
 }
 
 /// A finished upload to attach to a message, with what the sender's app
@@ -382,6 +389,11 @@ pub enum ServerMsg {
         channel: String,
         id: String,
     },
+    /// The channel lists changed (an admin added one).
+    Channels {
+        text_channels: Vec<String>,
+        voice_channels: Vec<String>,
+    },
 }
 
 /// The server has accounts.
@@ -407,6 +419,8 @@ pub const FATAL_ERRORS: &[&str] = &[
 pub const FEATURE_ATTACHMENTS: &str = "attachments";
 /// Any file, over HTTP (see [`files`]).
 pub const FEATURE_FILES: &str = "files";
+/// Admins can add channels from the app ([`ClientMsg::CreateChannel`]).
+pub const FEATURE_CHANNELS: &str = "channels";
 
 // ---------------------------------------------------------------- voice frames
 

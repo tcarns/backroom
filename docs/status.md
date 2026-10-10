@@ -2,14 +2,27 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.9.0 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.9.1 (app and server).
 
 ## Waiting on the owner
-- **At the next update (0.9.0 to anything newer), ask the owner whether the
-  window kept its size and place.** Keep this item until they confirm.
-  Updating 0.8.6 to 0.9.0 couldn't keep it: the 0.8.6 app that ran the update
-  had no code to save the window, so 0.9.0 opened at the default size. Play
-  right away was confirmed on the owner's PC (2026-10-10).
+- **Ask the owner whether the window kept its size and place through the
+  0.9.0 to 0.9.1 update** (asked when 0.9.1 shipped). Keep this item until they
+  confirm. Updating 0.8.6 to 0.9.0 couldn't keep it: the 0.8.6 app that ran
+  the update had no code to save the window.
+
+## In 0.9.1
+- Admins add text and voice channels from the app: "+" by each list heading
+  opens a name box (Enter adds, Esc cancels); `client/src/channels_ui.rs`,
+  `server/src/channels.rs`. Server cleans the name (text: lowercase, dashes),
+  refuses duplicates and more than 50 per kind, saves both lists into the
+  settings file (`config::save_channels`, keeps other lines; creates the
+  default file when there's none) and sends `Channels` to everyone. New
+  protocol: `createChannel`, `channels`, feature `"channels"` (older servers
+  don't show the "+"). The creator's app opens the new text channel. Not in
+  the app: rename, delete, reorder. Checked: `tests/test_channels.py`, unit
+  test for the file rewrite, Wine screenshots.
+- Member list slides open/shut in 150 ms (`members.rs`, laid out at full
+  width and clipped while it moves); repaints only during the slide.
 
 ## In 0.9.0
 - Preload (`client/src/downloads.rs`): video/audio attachments visible in the

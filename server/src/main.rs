@@ -7,6 +7,7 @@
 mod log;
 mod accounts;
 mod auth;
+mod channels;
 mod config;
 mod files;
 mod selfupdate;
@@ -345,6 +346,7 @@ fn handle_text(shared: &Shared, id: u32, text: &str) -> Option<ClientMsg> {
             channel,
             id: msg_id,
         } => delete_message(&mut st, id, &channel, &msg_id),
+        ClientMsg::CreateChannel { name, voice } => channels::create(&mut st, id, &name, voice),
     }
     None
 }

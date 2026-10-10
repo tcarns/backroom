@@ -8,6 +8,7 @@
 mod accounts;
 mod attach;
 mod attach_ui;
+mod channels_ui;
 mod chat;
 mod chat_text;
 mod dialogs;
@@ -191,6 +192,8 @@ struct Session {
     users: Vec<User>,
     /// Everyone with an account (servers with accounts), for the member list.
     members: Vec<Member>,
+    /// Admins can add channels (newer servers).
+    add_channels: bool,
 }
 
 impl Session {
@@ -324,6 +327,7 @@ struct App {
     confirm_open: Option<Attachment>,
     /// "Delete message?" waiting for an answer (admins).
     confirm_delete: Option<proto::ChatMessage>,
+    new_channel: channels_ui::NewChannel,
     /// How the last run crashed, for the server's log once signed in.
     crash_report: Option<String>,
     /// Shown again once signed in (see `startup_notice`).
@@ -409,6 +413,7 @@ impl App {
             player: None,
             confirm_open: None,
             confirm_delete: None,
+            new_channel: Default::default(),
             crash_report: None,
             startup_notice: None,
             settings_dirty: false,

@@ -124,6 +124,7 @@ impl App {
                     voice_state,
                     users,
                     members,
+                    add_channels: features.iter().any(|f| f == proto::FEATURE_CHANNELS),
                 });
                 self.conn = Conn::Online;
                 self.login_error = None;
@@ -219,6 +220,9 @@ impl App {
                 if code == "voice_full" {
                     self.joining = None;
                 }
+                if code == "channel_failed" {
+                    self.new_channel.awaiting_text = false;
+                }
                 if matches!(
                     code.as_str(),
                     "bad_old_password" | "weak_password_change" | "bad_rename"
@@ -283,6 +287,10 @@ impl App {
                     self.confirm_delete = None;
                 }
             }
+            ServerMsg::Channels {
+                text_channels,
+                voice_channels,
+            } => self.on_channels(text_channels, voice_channels),
             ServerMsg::Restarting { version } => self.server_restarting = Some(version),
             m @ (ServerMsg::AccountUpdated { .. }
             | ServerMsg::Accounts { .. }

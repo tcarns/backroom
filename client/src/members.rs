@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 /// Narrower windows hide the list (the button still shows it).
 pub const MIN_WINDOW: f32 = 900.0;
 const WIDTH: f32 = 240.0;
+const SLIDE_SECS: f32 = 0.15;
 
 struct Row {
     name: String,
@@ -63,7 +64,14 @@ impl App {
     }
 
     pub fn member_panel(&mut self, ctx: &egui::Context, speaking: &HashSet<u32>) {
-        if !self.members_visible(ctx) {
+        // Slides open and shut; repaints only while it moves.
+        let t = ctx.animate_bool_with_time_and_easing(
+            egui::Id::new("members_open"),
+            self.members_visible(ctx),
+            SLIDE_SECS,
+            egui::emath::easing::cubic_out,
+        );
+        if t <= 0.0 {
             return;
         }
         let Some(sess) = &self.session else { return };
@@ -139,7 +147,7 @@ impl App {
         let mut open_pop: Option<VolumePop> = None;
         let bg = theme::mix(pal().bg, pal().bg_deep, 0.55);
         egui::SidePanel::right("members")
-            .exact_width(WIDTH)
+            .exact_width(WIDTH * t)
             .resizable(false)
             .frame(Frame::new().fill(bg).inner_margin(Margin {
                 left: 10,
@@ -148,120 +156,134 @@ impl App {
                 bottom: 8,
             }))
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink(false)
-                    .show(ui, |ui| {
-                        let header = |ui: &mut egui::Ui, text: String| {
-                            ui.add_space(4.0);
-                            ui.label(
-                                egui::RichText::new(text)
-                                    .size(12.0)
-                                    .strong()
-                                    .color(pal().faint),
-                            );
-                            ui.add_space(2.0);
-                        };
-                        header(ui, format!("ONLINE — {online}"));
-                        for (i, r) in rows.iter().enumerate() {
-                            if i == online && offline > 0 {
-                                ui.add_space(10.0);
-                                header(ui, format!("OFFLINE — {offline}"));
-                            }
-                            let clickable = (r.online && !r.me) || (!r.online && is_admin);
-                            let h = if r.voice.is_some() { 44.0 } else { 36.0 };
-                            let (rect, resp) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), h),
-                                if clickable {
-                                    Sense::click()
-                                } else {
-                                    Sense::hover()
-                                },
-                            );
-                            if clickable && resp.hovered() {
-                                ui.painter()
-                                    .rect_filled(rect, CornerRadius::same(6), pal().raised);
-                            }
-                            let p = ui.painter();
-                            let c = rect.left_center() + egui::vec2(20.0, 0.0);
-                            paint_avatar(p, c, 14.0, &r.name, r.talking, bg);
-                            if !r.online {
-                                // Faded, like Discord's offline members.
-                                p.circle_filled(c, 15.0, theme::with_alpha(bg, 140));
-                            } else {
-                                p.circle_filled(c + egui::vec2(10.0, 10.0), 5.5, bg);
-                                p.circle_filled(c + egui::vec2(10.0, 10.0), 4.0, pal().teal);
-                            }
-                            let name_color = if !r.online {
-                                pal().faint
-                            } else if r.talking {
-                                pal().accent
-                            } else {
-                                pal().text
-                            };
-                            let label = if r.me {
-                                format!("{} (you)", r.name)
-                            } else {
-                                r.name.clone()
-                            };
-                            let name_y = if r.voice.is_some() {
-                                rect.center().y - 8.0
-                            } else {
-                                rect.center().y
-                            };
-                            let g = p.layout_no_wrap(label, FontId::proportional(14.5), name_color);
-                            let name_w = g.size().x.min(rect.width() - 80.0);
-                            p.with_clip_rect(rect.shrink2(egui::vec2(0.0, 0.0)).intersect(
-                                egui::Rect::from_min_max(
-                                    rect.min,
-                                    egui::pos2(rect.right() - 26.0, rect.bottom()),
-                                ),
-                            ))
-                            .galley(
-                                egui::pos2(rect.left() + 42.0, name_y - g.size().y / 2.0),
-                                g,
-                                name_color,
-                            );
-                            if r.admin {
-                                let crown = egui::Rect::from_center_size(
-                                    egui::pos2(rect.left() + 42.0 + name_w + 11.0, name_y),
-                                    egui::vec2(15.0, 15.0),
+                // Lay the list out at full width while it slides; the panel clips the rest.
+                let mut full = ui.max_rect();
+                full.set_width(full.width() + WIDTH * (1.0 - t));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(full), |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            let header = |ui: &mut egui::Ui, text: String| {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(text)
+                                        .size(12.0)
+                                        .strong()
+                                        .color(pal().faint),
                                 );
-                                if let Some(n) = tuffcord::twemoji::name_for("👑") {
-                                    chat_text::paint(ui, &mut self.emoji.borrow_mut(), n, crown);
+                                ui.add_space(2.0);
+                            };
+                            header(ui, format!("ONLINE — {online}"));
+                            for (i, r) in rows.iter().enumerate() {
+                                if i == online && offline > 0 {
+                                    ui.add_space(10.0);
+                                    header(ui, format!("OFFLINE — {offline}"));
                                 }
-                                let _ = ui
-                                    .interact(crown, ui.id().with(("crown", i)), Sense::hover())
-                                    .on_hover_text("Admin");
-                            }
-                            if let Some((ch, muted, deafened)) = &r.voice {
+                                let clickable = (r.online && !r.me) || (!r.online && is_admin);
+                                let h = if r.voice.is_some() { 44.0 } else { 36.0 };
+                                let (rect, resp) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), h),
+                                    if clickable {
+                                        Sense::click()
+                                    } else {
+                                        Sense::hover()
+                                    },
+                                );
+                                if clickable && resp.hovered() {
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        CornerRadius::same(6),
+                                        pal().raised,
+                                    );
+                                }
                                 let p = ui.painter();
-                                let y = rect.center().y + 10.0;
-                                p.text(
-                                    egui::pos2(rect.left() + 42.0, y),
-                                    Align2::LEFT_CENTER,
-                                    format!("🔊 {ch}"),
-                                    FontId::proportional(12.0),
-                                    pal().muted,
+                                let c = rect.left_center() + egui::vec2(20.0, 0.0);
+                                paint_avatar(p, c, 14.0, &r.name, r.talking, bg);
+                                if !r.online {
+                                    // Faded, like Discord's offline members.
+                                    p.circle_filled(c, 15.0, theme::with_alpha(bg, 140));
+                                } else {
+                                    p.circle_filled(c + egui::vec2(10.0, 10.0), 5.5, bg);
+                                    p.circle_filled(c + egui::vec2(10.0, 10.0), 4.0, pal().teal);
+                                }
+                                let name_color = if !r.online {
+                                    pal().faint
+                                } else if r.talking {
+                                    pal().accent
+                                } else {
+                                    pal().text
+                                };
+                                let label = if r.me {
+                                    format!("{} (you)", r.name)
+                                } else {
+                                    r.name.clone()
+                                };
+                                let name_y = if r.voice.is_some() {
+                                    rect.center().y - 8.0
+                                } else {
+                                    rect.center().y
+                                };
+                                let g =
+                                    p.layout_no_wrap(label, FontId::proportional(14.5), name_color);
+                                let name_w = g.size().x.min(rect.width() - 80.0);
+                                p.with_clip_rect(rect.shrink2(egui::vec2(0.0, 0.0)).intersect(
+                                    egui::Rect::from_min_max(
+                                        rect.min,
+                                        egui::pos2(rect.right() - 26.0, rect.bottom()),
+                                    ),
+                                ))
+                                .galley(
+                                    egui::pos2(rect.left() + 42.0, name_y - g.size().y / 2.0),
+                                    g,
+                                    name_color,
                                 );
-                                paint_voice_flags(
-                                    p,
-                                    egui::pos2(rect.right() - 12.0, rect.center().y),
-                                    *muted,
-                                    *deafened,
-                                    11.0,
-                                );
+                                if r.admin {
+                                    let crown = egui::Rect::from_center_size(
+                                        egui::pos2(rect.left() + 42.0 + name_w + 11.0, name_y),
+                                        egui::vec2(15.0, 15.0),
+                                    );
+                                    if let Some(n) = tuffcord::twemoji::name_for("👑") {
+                                        chat_text::paint(
+                                            ui,
+                                            &mut self.emoji.borrow_mut(),
+                                            n,
+                                            crown,
+                                        );
+                                    }
+                                    let _ = ui
+                                        .interact(crown, ui.id().with(("crown", i)), Sense::hover())
+                                        .on_hover_text("Admin");
+                                }
+                                if let Some((ch, muted, deafened)) = &r.voice {
+                                    let p = ui.painter();
+                                    let y = rect.center().y + 10.0;
+                                    p.text(
+                                        egui::pos2(rect.left() + 42.0, y),
+                                        Align2::LEFT_CENTER,
+                                        format!("🔊 {ch}"),
+                                        FontId::proportional(12.0),
+                                        pal().muted,
+                                    );
+                                    paint_voice_flags(
+                                        p,
+                                        egui::pos2(rect.right() - 12.0, rect.center().y),
+                                        *muted,
+                                        *deafened,
+                                        11.0,
+                                    );
+                                }
+                                if clickable && resp.clicked() {
+                                    open_pop = Some(VolumePop {
+                                        name: r.name.clone(),
+                                        account: r.account,
+                                        pos: rect.left_top() - egui::vec2(8.0, 0.0),
+                                        opened_frame: ui.ctx().cumulative_frame_nr(),
+                                    });
+                                }
                             }
-                            if clickable && resp.clicked() {
-                                open_pop = Some(VolumePop {
-                                    name: r.name.clone(),
-                                    account: r.account,
-                                    pos: rect.left_top() - egui::vec2(8.0, 0.0),
-                                    opened_frame: ui.ctx().cumulative_frame_nr(),
-                                });
-                            }
-                        }
-                        ui.add_space(8.0);
-                    });
+                            ui.add_space(8.0);
+                        });
+                });
             });
         if let Some(mut p) = open_pop {
             // Open to the left of the list.

@@ -254,15 +254,6 @@ pub(crate) fn theme_swatch(
     resp.on_hover_text(t.label)
 }
 
-pub(crate) fn section_title(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(14.0);
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        ui.label(RichText::new(text).size(13.0).color(pal().faint).strong());
-    });
-    ui.add_space(2.0);
-}
-
 pub(crate) fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
     let btn = egui::Button::new(
         RichText::new(text)

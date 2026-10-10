@@ -44,3 +44,12 @@ Settled choices and why. Add one when a choice would otherwise be revisited.
   Wine folder once, `release-check.sh` runs `--version` once per release.
   `tools/wine-ui.sh` screenshots (~1–1.5k tokens each, ~3–8k per UI check)
   are opt-in and threads already use them only for UI/Windows-only changes.
+- **Adding channels: admins only, saved in the settings file (0.9.1).** Admins
+  already exist and gate deleting messages; the lists are written back into
+  `TUFFcord-server.toml` (other lines and comments kept) rather than a new data
+  file, so the file stays the one place channels are set. Rename, delete and
+  reorder aren't in the app yet (edit the file); `TEXT_CHANNELS` /
+  `VOICE_CHANNELS` env vars still win and make added channels temporary.
+- **Animations repaint only while moving.** The member list slides in 150 ms
+  with `animate_bool_with_time_and_easing`, which asks for frames only until
+  it reaches its end; the app stays idle otherwise.

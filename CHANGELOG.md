@@ -2,6 +2,11 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.9.1
+
+- Admins can add channels: click the + next to "Text channels" or "Voice channels", type a name and press Enter. Everyone sees the new channel right away, and it stays after the server restarts. (The server needs 0.9.1 too.)
+- The member list slides open and shut when you click the people button.
+
 ## 0.9.0
 
 - Videos and audio play right away: clips up to 50 MB start downloading as soon as they show up in the chat, so pressing Play doesn't wait for a download. Change the size (or turn it off) in Settings, Appearance and videos, "Download videos and audio ahead of time". Bigger files still download when you press Play.

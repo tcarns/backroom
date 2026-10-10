@@ -1,12 +1,13 @@
 //! The main screen layout and the left sidebar: channel lists, voice panel, own user row.
 
 use crate::theme::pal;
-use crate::widgets::{icon_button, paint_avatar, section_title};
-use crate::{members, App, VolumePop};
+use crate::widgets::{icon_button, paint_avatar};
+use crate::{channels_ui, members, App, VolumePop};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, FontId, Frame, Layout, Margin, RichText, Sense,
     Stroke,
 };
+use proto::ClientMsg;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tuffcord::keys::{self};
@@ -103,12 +104,19 @@ impl App {
     }
 
     pub(crate) fn channel_lists(&mut self, ui: &mut egui::Ui, speaking: &HashSet<u32>) {
+        let can_add = self.is_admin() && self.session.as_ref().is_some_and(|s| s.add_channels);
         let Some(sess) = &self.session else { return };
         let mut select_text: Option<String> = None;
+        let mut create: Option<(String, bool)> = None;
         let mut join: Option<String> = None;
         let mut open_pop: Option<VolumePop> = None;
 
-        section_title(ui, "Text channels");
+        create = create.or(channels_ui::header(
+            ui,
+            false,
+            can_add,
+            &mut self.new_channel,
+        ));
         for ch in &sess.text_channels {
             let selected = *ch == self.current_text;
             let unread = self.unread.contains(ch);
@@ -146,7 +154,12 @@ impl App {
             }
         }
 
-        section_title(ui, "Voice channels");
+        create = create.or(channels_ui::header(
+            ui,
+            true,
+            can_add,
+            &mut self.new_channel,
+        ));
         for ch in &sess.voice_channels {
             let here = self.voice_channel.as_deref() == Some(ch.as_str());
             let members = sess.members(ch);
@@ -267,13 +280,10 @@ impl App {
         ui.add_space(12.0);
 
         if let Some(ch) = select_text {
-            if ch != self.current_text {
-                self.player = None;
-            }
-            self.unread.remove(&ch);
-            self.current_text = ch.clone();
-            self.s.last_text_channel = Some(ch);
-            self.focus_composer = true;
+            self.select_text_channel(ch);
+        }
+        if let Some((name, voice)) = create {
+            self.net.send(ClientMsg::CreateChannel { name, voice });
         }
         if let Some(ch) = join {
             self.join_voice(ch);
@@ -281,6 +291,16 @@ impl App {
         if let Some(p) = open_pop {
             self.pop = Some(p);
         }
+    }
+
+    pub(crate) fn select_text_channel(&mut self, ch: String) {
+        if ch != self.current_text {
+            self.player = None;
+        }
+        self.unread.remove(&ch);
+        self.current_text = ch.clone();
+        self.s.last_text_channel = Some(ch);
+        self.focus_composer = true;
     }
 
     pub(crate) fn voice_panel(&mut self, ui: &mut egui::Ui) {

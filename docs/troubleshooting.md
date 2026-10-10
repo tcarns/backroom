@@ -55,6 +55,11 @@ bug or environment problem takes more than one try to understand.
 - **`tools/wine-ui.sh start` never returns** (seen once in the cloud
   environment, window was up) → run it in the background, or start
   `wine TUFFcord.exe` directly with `DISPLAY=:97` and take shots with `shot`.
+- **Wine: the app uses ~50% CPU while idle** (UI thread, plus wineserver) →
+  Wine, not the app: 0.9.0's release exe does the same and the number doesn't
+  change with what's on screen. Idle CPU can't be judged under Wine; compare
+  against the previous release's exe instead (asset download via
+  `gh api -H "Accept: application/octet-stream" .../releases/assets/<id>`).
 - **Wine: blank screenshots** → taken before the window drew; use
   `tools/wine-ui.sh start`, which waits for it. "Can't open X server" → the
   virtual display died; `start` brings it back.

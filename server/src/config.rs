@@ -6,6 +6,7 @@ use crate::log::Level;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone)]
 pub struct Config {
     pub port: u16,
     pub host: String,
@@ -246,7 +247,7 @@ max_attachment_mb = 100
 max_storage_mb = 5120
 "#;
 
-fn clean_channel(c: &str) -> String {
+pub(crate) fn clean_channel(c: &str) -> String {
     c.trim()
         .to_lowercase()
         .chars()
@@ -258,6 +259,62 @@ fn clean_channel(c: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Write the channel lists into the settings file (channels added from the
+/// app), replacing the `text_channels` and `voice_channels` settings or adding
+/// them at the end. The rest of the file, comments included, stays as it is.
+/// Environment variables still win over the file.
+pub fn save_channels(path: &Path, text: &[String], voice: &[String]) -> std::io::Result<()> {
+    // No file yet (settings from environment variables): start from the
+    // default one, as a first run would have.
+    let old = match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => default_file(&random_password()),
+        r => r?,
+    };
+    let nl = if old.contains("\r\n") { "\r\n" } else { "\n" };
+    let line = |key: &str, list: &[String]| {
+        let items: Vec<String> = list
+            .iter()
+            .map(|c| serde_json::to_string(c).expect("serialize"))
+            .collect();
+        // JSON string escapes are valid TOML basic strings.
+        format!("{key} = [{}]", items.join(", "))
+    };
+    let lines = [line("text_channels", text), line("voice_channels", voice)];
+    let mut done = [false; 2];
+    let mut in_list = false; // inside a list split over several lines
+    let mut out = String::new();
+    for l in old.lines() {
+        if in_list {
+            in_list = !l.contains(']');
+            continue;
+        }
+        let key = l.split('=').next().unwrap_or("").trim();
+        if let Some(i) = ["text_channels", "voice_channels"]
+            .iter()
+            .position(|k| *k == key && l.contains('='))
+        {
+            if !done[i] {
+                out += &lines[i];
+                out += nl;
+                done[i] = true;
+            }
+            in_list = l.contains('[') && !l.contains(']');
+            continue;
+        }
+        out += l;
+        out += nl;
+    }
+    for i in 0..2 {
+        if !done[i] {
+            out += &lines[i];
+            out += nl;
+        }
+    }
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(&tmp, path)
 }
 
 fn env(key: &str) -> Option<String> {
@@ -464,6 +521,28 @@ pub fn load() -> Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saves_channel_lists_and_keeps_the_rest() {
+        let dir = std::env::temp_dir().join(format!("tc-chan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s.toml");
+        std::fs::write(
+            &path,
+            "# top\r\nport = 3000\r\ntext_channels = [\r\n  \"general\",\r\n]\r\n# end\r\n",
+        )
+        .unwrap();
+        let voice = vec!["Lounge".to_string(), "Say \"hi\"".to_string()];
+        save_channels(&path, &["general".into(), "clips".into()], &voice).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text,
+            "# top\r\nport = 3000\r\ntext_channels = [\"general\", \"clips\"]\r\n# end\r\nvoice_channels = [\"Lounge\", \"Say \\\"hi\\\"\"]\r\n"
+        );
+        let parsed: FileConfig = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.voice_channels, Some(voice));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn upgrades_untouched_old_settings_only() {
