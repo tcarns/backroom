@@ -5,14 +5,11 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 **Last updated:** 2026-10-10. **Released:** 0.8.5 (app and server).
 
 ## Waiting on the owner
-- **Video freeze (owner, 0.8.2)**: the app hung seconds into a video, with
-  the Windows volume mixer, with and without the graphics card. Cause: a
-  lock-order deadlock between the player thread and Media Foundation's
-  callback (see troubleshooting). Fixed in 0.8.3; 0.8.5 undoes the fallbacks the freeze had
-  switched on (system player for that file, no GPU). Not reproducible here (no
-  Windows audio), so the owner confirms on his machine and re-enables
-  "Use the graphics card for videos" (0.8.2 turned it off after the freeze).
-  The friend's earlier 0.7.1 "crash" may have been the same bug (unchecked).
+- Nothing open. The video freeze (0.8.2: app and Windows volume mixer hung a
+  few seconds into a video) is fixed and confirmed on the owner's machine:
+  lock-order deadlock in `media.rs` (0.8.3, see troubleshooting); 0.8.5 resets
+  the fallbacks the freeze had switched on and adds a "Play videos here again"
+  button. The friend's earlier 0.7.1 "crash" may have been the same bug.
 
 ## Workspace (since 2026-10-10)
 - Repo is in the project settings and the project uses the "TUFFcord" cloud
@@ -22,6 +19,10 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   `.exe` builds work there since `tools/setup.sh` builds Rust's missing Windows
   startup objects (2026-10-10); the app runs under Wine, audio plays.
 - `tools/setup.sh` only before building or testing (~5 min bare, all passing).
+
+## In 0.8.5
+- One-time reset of `video_gpu` / `play_outside` (settings.rs `load`), Settings
+  button to clear `play_outside`.
 
 ## In 0.8.4
 - Rename finished: crates `tuffcord`/`tuffcord-server`, programs `TUFFcord`,
@@ -33,7 +34,8 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   re-allow the server in the Windows firewall.
 
 ## In 0.8.3
-- Video freeze fix above (`client/src/media.rs`).
+- Video freeze fix (`client/src/media.rs`): never call the engine while
+  holding `shared`.
 
 ## In 0.8.2
 - Chat messages get a subtle highlight under the pointer (Discord style).
