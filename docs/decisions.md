@@ -39,3 +39,8 @@ Settled choices and why. Add one when a choice would otherwise be revisited.
   New features go in the matching module; rules in CLAUDE.md. Server
   `main.rs` (1.5k) stays whole until it grows; next cuts there are voice,
   history and attachments.
+- **No rule limiting Wine checks (2026-10-10).** Audit found nothing runs
+  Wine per change: tests and workflows don't, `setup.sh` only creates the
+  Wine folder once, `release-check.sh` runs `--version` once per release.
+  `tools/wine-ui.sh` screenshots (~1–1.5k tokens each, ~3–8k per UI check)
+  are opt-in and threads already use them only for UI/Windows-only changes.
