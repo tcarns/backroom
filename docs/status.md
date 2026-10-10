@@ -5,10 +5,9 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 **Last updated:** 2026-10-10. **Released:** 0.9.1 (app and server).
 
 ## Waiting on the owner
-- **Ask the owner whether the window kept its size and place through the
-  0.9.0 to 0.9.1 update** (asked when 0.9.1 shipped). Keep this item until they
-  confirm. Updating 0.8.6 to 0.9.0 couldn't keep it: the 0.8.6 app that ran
-  the update had no code to save the window.
+- Nothing. Owner confirmed on 2026-10-10: adding channels works, the member
+  list animation works, and the window kept its size and place through the
+  0.9.0 to 0.9.1 update.
 
 ## In 0.9.1
 - Admins add text and voice channels from the app: "+" by each list heading
@@ -20,7 +19,7 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   protocol: `createChannel`, `channels`, feature `"channels"` (older servers
   don't show the "+"). The creator's app opens the new text channel. Not in
   the app: rename, delete, reorder. Checked: `tests/test_channels.py`, unit
-  test for the file rewrite, Wine screenshots.
+  test for the file rewrite, Wine screenshots, owner's PC.
 - Member list slides open/shut in 150 ms (`members.rs`, laid out at full
   width and clipped while it moves); repaints only during the slide.
 
@@ -38,8 +37,9 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 - Main window opens at its last size, place and maximized state (also after
   an update restart): `Settings.window`, tracked each frame by
   `App::remember_window` and applied by `main_viewport` (both `update_ui.rs`),
-  saved on close and before the update restart. Not guarded against a monitor
-  that was unplugged since (window could open off screen).
+  saved on close and before the update restart; confirmed through the 0.9.1
+  update. Not guarded against a monitor that was unplugged since (window could
+  open off screen).
 - Settings window can be dragged (opens centered via `pivot`/`default_pos`
   instead of `anchor`). Both checked under Wine.
 
