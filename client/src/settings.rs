@@ -6,6 +6,11 @@ use std::path::PathBuf;
 
 /// Starting volume for videos and audio in the chat, until changed in Settings.
 pub const DEFAULT_MEDIA_LEVEL: f32 = 0.5;
+/// Videos and audio up to this size download as soon as they're shown.
+pub const DEFAULT_PRELOAD_MB: u32 = 50;
+/// Space kept for downloaded files (played, opened or preloaded).
+pub const DEFAULT_CACHE_MB: u32 = 2048;
+pub const MIN_CACHE_MB: u32 = 256;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -66,6 +71,11 @@ pub struct Settings {
     /// Where the main window was and how big, so the next start (also the
     /// restart after an update) opens it the same way. Saved on close.
     pub window: Option<WindowPlace>,
+    /// Videos and audio up to this many MB download as soon as they come into
+    /// view, so Play starts at once (0 = only when Play is pressed).
+    pub preload_mb: u32,
+    /// Most space downloaded files may use, in MB (oldest go first).
+    pub cache_mb: u32,
 }
 
 /// The main window's last place on screen, in logical pixels.
@@ -109,6 +119,8 @@ impl Default for Settings {
             play_outside: Vec::new(),
             video_fallbacks_reset: false,
             window: None,
+            preload_mb: DEFAULT_PRELOAD_MB,
+            cache_mb: DEFAULT_CACHE_MB,
         }
     }
 }
@@ -201,7 +213,13 @@ impl Settings {
         }
         s.media_default = s.media_default.clamp(0.0, 1.0);
         s.media_level = s.media_default;
+        s.cache_mb = s.cache_mb.max(MIN_CACHE_MB);
         s
+    }
+
+    /// The cache budget in bytes.
+    pub fn cache_bytes(&self) -> u64 {
+        u64::from(self.cache_mb) * 1024 * 1024
     }
 
     pub fn save(&self) {
@@ -250,6 +268,14 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains("\"media_default\""));
         assert!(!json.contains("media_level"));
+    }
+
+    #[test]
+    fn older_settings_get_preload_and_cache_defaults() {
+        let s: Settings = serde_json::from_str(r#"{"name":"Tyler"}"#).unwrap();
+        assert_eq!(s.preload_mb, 50);
+        assert_eq!(s.cache_mb, 2048);
+        assert_eq!(s.cache_bytes(), 2 * 1024 * 1024 * 1024);
     }
 
     #[test]

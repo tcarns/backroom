@@ -14,7 +14,7 @@ use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2};
 use parking_lot::Mutex;
 use proto::files::{kind_of, Kind};
 use proto::{Attachment, ClientMsg, PostFile};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -62,7 +62,7 @@ pub struct Sending {
     pub cancel: Arc<AtomicBool>,
 }
 
-struct Ready {
+pub(crate) struct Ready {
     name: String,
     kind: Kind,
     source: Source,
@@ -74,7 +74,7 @@ struct Ready {
     preview: Option<ColorImage>,
 }
 
-enum Work {
+pub(crate) enum Work {
     Prepared(Result<Ready, String>),
     Cancelled,
     Thumb {
@@ -184,13 +184,20 @@ pub struct Attachments {
     ws_fallback: std::collections::HashSet<String>,
     tx: Sender<Work>,
     rx: Receiver<Work>,
-    wake: Wake,
+    pub(crate) wake: Wake,
     next_job: u64,
     thumb_order: VecDeque<String>,
     thumb_target: HashMap<String, [u32; 2]>,
     anim_order: VecDeque<String>,
     raw: VecDeque<(String, Arc<Vec<u8>>)>,
     raw_total: usize,
+    /// Clips downloading ahead of time, before anyone pressed Play: no
+    /// progress shown, no error if it fails.
+    pub(crate) preloads: HashSet<String>,
+    /// Clips whose preload failed: not tried again (Play still downloads).
+    pub(crate) no_preload: HashSet<String>,
+    /// Most space downloaded files may use (Settings), checked after each download.
+    pub cache_budget: u64,
 }
 
 /// Size an image or video is shown at, keeping its shape.
@@ -231,10 +238,13 @@ impl Attachments {
             anim_order: VecDeque::new(),
             raw: VecDeque::new(),
             raw_total: 0,
+            preloads: HashSet::new(),
+            no_preload: HashSet::new(),
+            cache_budget: u64::MAX,
         }
     }
 
-    fn spawn(&self, job: impl FnOnce() -> Work + Send + 'static) {
+    pub(crate) fn spawn(&self, job: impl FnOnce() -> Work + Send + 'static) {
         let tx = self.tx.clone();
         let wake = self.wake.clone();
         let _ = std::thread::Builder::new()
@@ -533,65 +543,6 @@ impl Attachments {
             .map(|(_, b)| b.clone())
     }
 
-    // ------------------------------------------------------------ downloads
-
-    /// Download a file to the cache (if it isn't there yet), then do `then`.
-    pub fn fetch(&mut self, a: &Attachment, then: Then) {
-        let cached = xfer::cached_path(&a.id, &a.name);
-        if cached.exists() {
-            self.fetches.insert(a.id.clone(), Fetch::Ready(cached));
-            self.then.insert(a.id.clone(), then);
-            return;
-        }
-        self.then.insert(a.id.clone(), then);
-        if matches!(self.fetches.get(&a.id), Some(Fetch::Downloading)) {
-            return;
-        }
-        let Some(to) = self.endpoint.clone() else {
-            self.fetches.insert(
-                a.id.clone(),
-                Fetch::Failed("The server needs updating first.".into()),
-            );
-            return;
-        };
-        self.fetches.insert(a.id.clone(), Fetch::Downloading);
-        self.progress.lock().insert(a.id.clone(), (0, a.size));
-        let progress = self.progress.clone();
-        let wake = self.wake.clone();
-        let id = a.id.clone();
-        self.spawn(move || {
-            let last = std::cell::Cell::new(Instant::now());
-            let report = |done: u64, total: u64| {
-                progress.lock().insert(id.clone(), (done, total));
-                if last.get().elapsed() > Duration::from_millis(120) {
-                    last.set(Instant::now());
-                    wake();
-                }
-            };
-            let never = AtomicBool::new(false);
-            let result = xfer::download(&to, &id, &cached, &report, &never).map(|_| cached);
-            progress.lock().remove(&id);
-            Work::Fetched { id, result }
-        });
-    }
-
-    /// The finished download, if there is one.
-    pub fn fetched(&self, id: &str) -> Option<&PathBuf> {
-        match self.fetches.get(id) {
-            Some(Fetch::Ready(p)) => Some(p),
-            _ => None,
-        }
-    }
-
-    /// Ask where to save a file (Windows dialog), then download and copy it there.
-    pub fn save_as(&mut self, a: &Attachment) {
-        let att = a.clone();
-        self.spawn(move || {
-            let to = images::save_file_dialog(&att.name);
-            Work::SavePicked { att, to }
-        });
-    }
-
     // ------------------------------------------------------------ viewer
 
     pub fn open_viewer(&mut self, a: &Attachment, net: &Net) {
@@ -760,9 +711,17 @@ impl Attachments {
                 }
                 Work::Fetched { id, result } => match result {
                     Ok(path) => {
+                        self.preloads.remove(&id);
                         let then = self.then.remove(&id).unwrap_or(Then::Nothing);
                         self.fetches.insert(id.clone(), Fetch::Ready(path.clone()));
                         finished.push((id, then, path));
+                        let budget = self.cache_budget;
+                        std::thread::spawn(move || xfer::prune_cache(budget));
+                    }
+                    Err(_) if self.preloads.remove(&id) => {
+                        self.then.remove(&id);
+                        self.fetches.remove(&id);
+                        self.no_preload.insert(id);
                     }
                     Err(e) => {
                         self.then.remove(&id);

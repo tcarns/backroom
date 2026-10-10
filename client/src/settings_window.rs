@@ -7,7 +7,9 @@ use eframe::egui::{self, Align2, CornerRadius, Frame, Margin, RichText, Sense, S
 use proto::update::{self as updates};
 use std::time::{Duration, Instant};
 use tuffcord::audio::{self, DeviceList};
+use tuffcord::images::size_label;
 use tuffcord::keys::{self, GlobalKeys};
+use tuffcord::settings::MIN_CACHE_MB;
 use tuffcord::voice::chime;
 
 /// The categories down the left side of the settings window.
@@ -48,6 +50,7 @@ impl App {
         {
             self.mem_mb = memory_stats::memory_stats().map(|m| m.physical_mem as f64 / 1_048_576.0);
             self.mem_checked = Some(Instant::now());
+            self.cache_used = tuffcord::files::cache_used();
         }
         let mut open = true;
         let mut reopen_input = false;
@@ -100,6 +103,8 @@ impl App {
                                         self.theme_section(ui);
                                         divider(ui);
                                         self.videos_section(ui);
+                                        divider(ui);
+                                        self.downloads_section(ui);
                                     }
                                     SettingsPage::Account => sign_out = self.account_section(ui),
                                     SettingsPage::System => self.updates_section(ui),
@@ -390,6 +395,60 @@ impl App {
             self.s.play_outside.clear();
             self.s.save();
         }
+    }
+
+    /// Clips downloaded ahead of time, and the space downloaded files may use.
+    fn downloads_section(&mut self, ui: &mut egui::Ui) {
+        heading(ui, "Downloads");
+        ui.label("Download videos and audio ahead of time, up to");
+        let resp = ui.add(
+            egui::Slider::new(&mut self.s.preload_mb, 0..=200)
+                .step_by(5.0)
+                .custom_formatter(|v, _| {
+                    if v == 0.0 {
+                        "Off".into()
+                    } else {
+                        format!("{v:.0} MB")
+                    }
+                }),
+        );
+        if resp.changed() {
+            self.settings_dirty = true;
+        }
+        ui.label(
+            RichText::new("Clips this size or smaller download as soon as they show up in the chat, so they play right away. Larger ones download when you press Play.")
+                .size(12.5)
+                .color(pal().faint),
+        );
+        ui.add_space(10.0);
+        ui.label("Space for downloaded files");
+        let mut gb = self.s.cache_mb as f32 / 1024.0;
+        let min = MIN_CACHE_MB as f32 / 1024.0;
+        let resp = ui.add(
+            egui::Slider::new(&mut gb, min..=20.0)
+                .step_by(0.25)
+                .suffix(" GB")
+                .fixed_decimals(2),
+        );
+        if resp.changed() {
+            self.s.cache_mb = ((gb * 1024.0).round() as u32).max(MIN_CACHE_MB);
+            self.att.cache_budget = self.s.cache_bytes();
+            self.settings_dirty = true;
+        }
+        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+            // Smaller than what's stored: remove the oldest files now.
+            let budget = self.att.cache_budget;
+            std::thread::spawn(move || tuffcord::files::prune_cache(budget));
+            self.mem_checked = None;
+        }
+        ui.label(
+            RichText::new(format!(
+                "In use: {}. The oldest files are removed when it's full.",
+                size_label(self.cache_used)
+            ))
+            .size(12.5)
+            .color(pal().faint),
+        );
     }
 
     /// Theme swatches.

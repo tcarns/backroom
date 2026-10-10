@@ -11,6 +11,7 @@ mod attach_ui;
 mod chat;
 mod chat_text;
 mod dialogs;
+mod downloads;
 mod emoji_picker;
 mod members;
 mod server_msgs;
@@ -301,6 +302,8 @@ struct App {
     capturing: bool,
     mem_mb: Option<f64>,
     mem_checked: Option<Instant>,
+    /// Space downloaded files use (Settings shows it), checked with `mem_mb`.
+    cache_used: u64,
     update: Arc<Mutex<UpdateState>>,
     update_auto_started: bool,
     update_dismissed: Option<String>,
@@ -389,6 +392,7 @@ impl App {
             capturing: false,
             mem_mb: None,
             mem_checked: None,
+            cache_used: 0,
             update: Arc::new(Mutex::new(UpdateState::default())),
             update_auto_started: false,
             update_dismissed: None,
@@ -412,7 +416,9 @@ impl App {
             emoji_tab: RECENT,
             emoji_search: String::new(),
         };
-        std::thread::spawn(tuffcord::files::prune_cache);
+        app.att.cache_budget = app.s.cache_bytes();
+        let budget = app.att.cache_budget;
+        std::thread::spawn(move || tuffcord::files::prune_cache(budget));
         app.apply_voice_flags();
         if app.s.check_updates {
             app.update_auto_started = true;

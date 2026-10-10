@@ -12,8 +12,6 @@ use std::time::{Duration, SystemTime};
 
 /// Size of each piece we send (the server takes up to 4 MB).
 const PIECE: u64 = 2 * 1024 * 1024;
-/// Downloaded files kept for replaying and reopening (oldest go first).
-const CACHE_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 
 /// Where to send requests, and the key that says who we are.
 #[derive(Clone, Debug, PartialEq)]
@@ -362,9 +360,23 @@ pub fn cached_path(id: &str, name: &str) -> PathBuf {
     }
 }
 
-/// Keep the cache under its budget, removing the least recently used files.
-/// Also clears unfinished downloads more than a day old.
-pub fn prune_cache() {
+/// Space the downloaded files use now, in bytes.
+pub fn cache_used() -> u64 {
+    std::fs::read_dir(cache_dir())
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|e| e.metadata().ok())
+                .filter(|m| m.is_file())
+                .map(|m| m.len())
+                .sum()
+        })
+        .unwrap_or(0)
+}
+
+/// Keep the cache under `budget` bytes, removing the least recently used
+/// files. Also clears unfinished downloads more than a day old.
+pub fn prune_cache(budget: u64) {
     let Ok(entries) = std::fs::read_dir(cache_dir()) else {
         return;
     };
@@ -388,7 +400,7 @@ pub fn prune_cache() {
     let mut total: u64 = files.iter().map(|f| f.1).sum();
     files.sort_by_key(|f| f.2);
     for (path, len, _) in files {
-        if total <= CACHE_BUDGET {
+        if total <= budget {
             break;
         }
         if std::fs::remove_file(&path).is_ok() {

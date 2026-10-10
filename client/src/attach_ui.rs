@@ -27,6 +27,8 @@ pub enum Act {
     Gif(Attachment, Vec2),
     View(Attachment),
     Play(Attachment),
+    /// A clip came into view: download it ahead of time.
+    Preload(Attachment),
     Toggle,
     Seek(f64),
     Volume(f32),
@@ -151,7 +153,7 @@ fn failure(att: &attach::Attachments, a: &Attachment) -> Option<String> {
 }
 
 fn progress_label(att: &attach::Attachments, a: &Attachment) -> Option<String> {
-    if !matches!(att.fetches.get(&a.id), Some(Fetch::Downloading)) {
+    if !matches!(att.fetches.get(&a.id), Some(Fetch::Downloading)) || att.preloading(&a.id) {
         return None;
     }
     let (done, total) = att
@@ -286,6 +288,10 @@ impl App {
             if !self.att.images.contains_key(&p.id) && ui.is_rect_visible(rect) {
                 acts.push(Act::Image(p.id.clone(), "poster.jpg".into(), size));
             }
+        }
+
+        if playing.is_none() && ui.is_rect_visible(rect) {
+            self.maybe_preload(a, acts);
         }
 
         let status = playing.map(|p| p.player.status());
@@ -448,7 +454,7 @@ impl App {
     fn audio_ui(&self, ui: &mut egui::Ui, a: &Attachment, acts: &mut Vec<Act>) {
         let playing = self.player.as_ref().filter(|p| p.id == a.id);
         let status = playing.map(|p| p.player.status());
-        card_frame()
+        let card = card_frame()
             .show(ui, |ui| {
                 let w = (ui.available_width()).min(CARD_W - 20.0);
                 ui.set_width(w);
@@ -520,8 +526,11 @@ impl App {
                     });
                 });
             })
-            .response
-            .on_hover_text(format!("{} · {}", a.name, size_label(a.size)))
+            .response;
+        if playing.is_none() && ui.is_rect_visible(card.rect) {
+            self.maybe_preload(a, acts);
+        }
+        card.on_hover_text(format!("{} · {}", a.name, size_label(a.size)))
             .context_menu(|ui| {
                 if ui.button("Open in your music player").clicked() {
                     acts.push(Act::Open(a.clone()));
@@ -724,8 +733,10 @@ impl App {
                 }
                 Act::Gif(a, size) => self.att.request_gif(&a, size, ppp, &self.net),
                 Act::View(a) => self.att.open_viewer(&a, &self.net),
+                Act::Preload(a) => self.att.preload(&a),
                 Act::Play(a) => {
-                    if let Some(path) = self.att.fetched(&a.id).cloned() {
+                    // The file may have been pruned from the cache since.
+                    if let Some(path) = self.att.fetched(&a.id).filter(|p| p.exists()).cloned() {
                         self.start_playing(ctx, &a, path);
                     } else {
                         self.att.fetch(&a, Then::Play);
