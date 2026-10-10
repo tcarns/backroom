@@ -125,6 +125,8 @@ Files travel over plain HTTP on the server's port, separately from voice, so a b
 
 **App:** each person's app keeps its own log in `%APPDATA%\TUFFcord\TUFFcord.log` (Settings → **Open log file**): sign-ins, lost connections, every error the app shows, and each file sent or downloaded, with the server's exact answer when something fails. It's replaced by a fresh one past 2 MB (the previous one is kept as `TUFFcord.log.1`).
 
+**Crashes:** if the app crashes, it writes down why before closing: the error, the part of the program (or Windows file, such as a graphics driver or video decoder) it happened in, and which video was playing. The next time it starts, it sends that to the server's log as an `App error on <name>'s computer`, so you see it without asking. If it closed in the middle of a video, it also avoids doing it again: the first time it stops using the graphics card for videos (Settings → **Use the graphics card for videos** turns it back on), and if a video still closes it without the graphics card, that file opens in the person's own video player from then on.
+
 | Level | Shows |
 | --- | --- |
 | `trace` | When each person starts and stops talking |

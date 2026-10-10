@@ -51,6 +51,25 @@ pub fn write(level: &str, message: &str) {
     }
 }
 
+/// For crash handlers: never waits for the lock (the crash may have happened
+/// while this thread was writing), opening the file separately instead.
+pub fn write_no_wait(level: &str, message: &str) {
+    let line = format!(
+        "{} {level:<5} {}\n",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+        message.replace('\n', " | ")
+    );
+    if let Ok(mut slot) = FILE.try_lock() {
+        if let Some((file, _)) = slot.as_mut() {
+            let _ = file.write_all(line.as_bytes());
+            return;
+        }
+    }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path()) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
 pub fn info(message: impl AsRef<str>) {
     write("INFO", message.as_ref());
 }

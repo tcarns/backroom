@@ -2,6 +2,13 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.1
+
+- If the app crashes, the reason now goes in its log, and the server's log gets it the next time the app starts (before, the app just closed and nothing was written down).
+- If the app closes in the middle of a video, it stops using the graphics card for videos and says so; if a video still closes it after that, that file opens in your video player instead. Settings → "Use the graphics card for videos" turns the graphics card back on.
+- The log now says how each video is played (on the graphics card, and which one, or without it) and its size.
+- The "Updated to…" message now stays up after signing back in.
+
 ## 0.8.0
 
 - Backroom is now **TUFFcord**. Your settings, sign-in, chat history and accounts carry over, and both the app and the server update themselves as usual. Copies that update keep their old file names (`backroom.exe`, `backroom-server.exe`), so shortcuts keep working. On the server, `backroom-server.toml` is renamed to `TUFFcord-server.toml`, and an `app_name` still at the old default becomes "TUFFcord".

@@ -56,7 +56,7 @@ fn check_media(file: &std::path::Path, report: &std::path::Path) {
     }
     let frames = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let wake: Wake = Arc::new(|| {});
-    match backroom::media::Player::open(file, [320, 180], 0.0, wake) {
+    match backroom::media::Player::open(file, [320, 180], 0.0, true, wake) {
         Ok(player) => {
             let start = Instant::now();
             let mut last = None;
@@ -97,12 +97,20 @@ fn main() -> eframe::Result {
     let just_updated = std::env::args().any(|a| a == "--updated");
     // Backroom's settings folder becomes TUFFcord's (first run after the rename).
     backroom::settings::move_old_folders();
+    backroom::crash::install();
+    let last_run = backroom::crash::take_last_run();
     let settings = Settings::load();
     backroom::applog::info(format!(
         "TUFFcord {} started (log: {})",
         updates::CURRENT,
         backroom::applog::path().display()
     ));
+    if let Some(p) = &last_run.interrupted {
+        backroom::applog::warn(format!(
+            "Last time, the app closed in the middle of playing {}",
+            p.describe()
+        ));
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("TUFFcord")
@@ -113,11 +121,22 @@ fn main() -> eframe::Result {
         vsync: true,
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "TUFFcord",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, settings, resume, just_updated)))),
-    )
+        Box::new(move |cc| {
+            Ok(Box::new(App::new(
+                cc,
+                settings,
+                resume,
+                just_updated,
+                last_run,
+            )))
+        }),
+    );
+    // Closed normally: a video that was playing didn't cause anything.
+    backroom::crash::playing_stopped();
+    result
 }
 
 fn app_icon() -> egui::IconData {
@@ -292,6 +311,10 @@ struct App {
     confirm_open: Option<Attachment>,
     /// "Delete message?" waiting for an answer (admins).
     confirm_delete: Option<proto::ChatMessage>,
+    /// How the last run crashed, for the server's log once signed in.
+    crash_report: Option<String>,
+    /// Shown again once signed in (see `startup_notice`).
+    startup_notice: Option<(String, bool, Option<u64>)>,
     /// Settings changed in a way that's saved once the mouse is let go
     /// (dragging a volume bar would otherwise save on every frame).
     settings_dirty: bool,
@@ -311,6 +334,7 @@ impl App {
         s: Settings,
         resume: Option<updater::Resume>,
         just_updated: bool,
+        last_run: backroom::crash::LastRun,
     ) -> Self {
         theme::apply(&cc.egui_ctx, &s.theme);
         emoji::install_font(&cc.egui_ctx);
@@ -370,6 +394,8 @@ impl App {
             player: None,
             confirm_open: None,
             confirm_delete: None,
+            crash_report: None,
+            startup_notice: None,
             settings_dirty: false,
             unmute_level: backroom::settings::DEFAULT_MEDIA_LEVEL,
             emoji_tab: RECENT,
@@ -408,13 +434,62 @@ impl App {
             app.connect_saved(token, group);
         }
         if just_updated {
-            app.show_banner(
+            app.startup_notice(
                 format!("Updated to TUFFcord {}.", updates::CURRENT),
                 false,
                 Some(8),
             );
         }
+        app.after_bad_exit(last_run);
         app
+    }
+
+    /// A message for the top of the chat that also survives signing in
+    /// (which clears connection messages).
+    fn startup_notice(&mut self, text: impl Into<String>, error: bool, secs: Option<u64>) {
+        let text = text.into();
+        self.show_banner(text.clone(), error, secs);
+        self.startup_notice = Some((text, error, secs));
+    }
+
+    /// The previous run crashed, or ended while playing something: say so,
+    /// tell the server's log once signed in, and avoid doing it again.
+    fn after_bad_exit(&mut self, last: backroom::crash::LastRun) {
+        let mut report = last.crash.clone().map(|c| format!("The app crashed: {c}"));
+        if let Some(p) = last.interrupted {
+            let why = if last.crash.is_some() { "crashed" } else { "closed unexpectedly" };
+            let msg = if p.gpu {
+                self.s.video_gpu = false;
+                format!(
+                    "TUFFcord {why} while playing {}. Videos now play without the graphics card (you can change that in Settings).",
+                    p.name
+                )
+            } else {
+                if !self.s.play_outside.contains(&p.id) {
+                    self.s.play_outside.insert(0, p.id.clone());
+                    self.s.play_outside.truncate(50);
+                }
+                format!(
+                    "TUFFcord {why} while playing {}, so that file will open in your video player from now on.",
+                    p.name
+                )
+            };
+            self.s.save();
+            self.startup_notice(msg, true, None);
+            if report.is_none() {
+                report = Some(format!(
+                    "The app closed unexpectedly while playing {}",
+                    p.describe()
+                ));
+            }
+        } else if last.crash.is_some() {
+            self.startup_notice(
+                "TUFFcord crashed last time. The reason is in the log (Settings → Open log file) and was sent to the server's log.",
+                true,
+                Some(12),
+            );
+        }
+        self.crash_report = report;
     }
 
     // ------------------------------------------------------------ actions
@@ -680,6 +755,12 @@ impl App {
             } => {
                 let first = self.session.is_none();
                 self.on_welcome(account, token, must_change_password);
+                if let Some(r) = self.crash_report.take() {
+                    self.net.send(ClientMsg::Report {
+                        kind: "error".into(),
+                        message: r,
+                    });
+                }
                 self.server_restarting = None;
                 self.att.server_supports = features.iter().any(|f| f == FEATURE_ATTACHMENTS);
                 let endpoint = file_key
@@ -737,6 +818,14 @@ impl App {
                 self.conn = Conn::Online;
                 self.login_error = None;
                 self.banner = None;
+                // Said at start (updated, crashed last time): still worth seeing.
+                if let Some((text, error, secs)) = self.startup_notice.take() {
+                    self.banner = Some(Banner {
+                        text,
+                        error,
+                        until: secs.map(|s| Instant::now() + Duration::from_secs(s)),
+                    });
+                }
                 if first {
                     self.focus_composer = true;
                 }
@@ -1803,6 +1892,8 @@ impl App {
             text_channel: Some(self.current_text.clone()),
         };
         self.s.save();
+        // Not a crash: don't let the new copy think playing something was the problem.
+        self.player = None;
         match updater::relaunch(&exe, &resume) {
             Ok(()) => {
                 self.net.disconnect();
@@ -2926,6 +3017,17 @@ impl App {
                             )
                             .changed();
                         ui.checkbox(&mut self.s.sounds, "Join, leave and message sounds");
+                        if backroom::media::supported()
+                            && ui
+                                .checkbox(
+                                    &mut self.s.video_gpu,
+                                    "Use the graphics card for videos",
+                                )
+                                .on_hover_text("Lighter on the processor. Turned off by itself if TUFFcord ever closes in the middle of a video.")
+                                .changed()
+                        {
+                            self.s.save();
+                        }
 
                         ui.add_space(10.0);
                         ui.separator();

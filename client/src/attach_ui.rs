@@ -46,6 +46,12 @@ pub struct Playing {
     pub failed: Option<String>,
 }
 
+impl Drop for Playing {
+    fn drop(&mut self) {
+        backroom::crash::playing_stopped();
+    }
+}
+
 const CARD_W: f32 = 420.0;
 /// Width of the little volume bar next to the speaker button.
 const VOLUME_BAR: f32 = 56.0;
@@ -847,6 +853,12 @@ impl App {
             self.open_now(&path, &a.name);
             return;
         }
+        if self.s.play_outside.contains(&a.id) {
+            // TUFFcord closed in the middle of playing this one before.
+            backroom::applog::info(format!("Opening {} in the system's player", a.name));
+            self.open_now(&path, &a.name);
+            return;
+        }
         let ppp = ctx.pixels_per_point().clamp(1.0, 2.0);
         let size = if kind_of(&a.mime) == Kind::Video {
             let s = attach::display_size(a.width, a.height, attach::VIDEO_MAX) * ppp;
@@ -855,8 +867,14 @@ impl App {
             [0, 0]
         };
         backroom::applog::info(format!("Playing {} ({}) in the chat", a.name, a.mime));
-        match Player::open(&path, size, self.s.media_level, self.wake.clone()) {
+        let gpu = self.s.video_gpu;
+        match Player::open(&path, size, self.s.media_level, gpu, self.wake.clone()) {
             Ok(player) => {
+                backroom::crash::playing_started(backroom::crash::Playback {
+                    id: a.id.clone(),
+                    name: a.name.clone(),
+                    gpu,
+                });
                 self.player = Some(Playing {
                     id: a.id.clone(),
                     player,

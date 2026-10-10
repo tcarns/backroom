@@ -84,11 +84,13 @@ mod imp {
 
     impl Player {
         /// Start playing `path`. Video frames are delivered at `size` pixels
-        /// (letterboxed to keep their shape).
+        /// (letterboxed to keep their shape). `gpu_allowed`: decode on the
+        /// graphics card when there is one.
         pub fn open(
             path: &Path,
             size: [u32; 2],
             volume: f32,
+            gpu_allowed: bool,
             wake: Wake,
         ) -> Result<Player, String> {
             let (tx, rx) = channel();
@@ -97,8 +99,11 @@ mod imp {
             let s = shared.clone();
             std::thread::Builder::new()
                 .name("player".into())
+                // Decoders and graphics drivers run on this thread too; give them room.
+                .stack_size(8 * 1024 * 1024)
                 .spawn(move || {
-                    let result = unsafe { run(&path, size, volume, &s, rx, &wake) };
+                    let result =
+                        unsafe { run(&path, size, volume, gpu_allowed, &s, rx, &wake) };
                     if let Err(e) = result {
                         s.lock().status.error = Some(describe(&e));
                         wake();
@@ -180,6 +185,7 @@ mod imp {
         path: &Path,
         mut size: [u32; 2],
         volume: f32,
+        gpu_allowed: bool,
         shared: &Arc<Mutex<Shared>>,
         rx: Receiver<Cmd>,
         wake: &Wake,
@@ -206,9 +212,32 @@ mod imp {
                 )?;
                 // Let the graphics card decode when there is one (much lighter on
                 // the processor); otherwise Windows decodes in software.
-                let gpu = gpu::Gpu::new().ok();
-                if let Some(g) = &gpu {
-                    attrs.SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, &g.manager)?;
+                let gpu = if gpu_allowed {
+                    match gpu::Gpu::new() {
+                        Ok(g) => Some(g),
+                        Err(e) => {
+                            crate::applog::info(format!(
+                                "No graphics card for video ({:#010x}); decoding without it",
+                                e.code().0 as u32
+                            ));
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+                match &gpu {
+                    Some(g) => {
+                        crate::applog::info(format!(
+                            "Video decoding on the graphics card: {}",
+                            g.adapter_name()
+                        ));
+                        attrs.SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, &g.manager)?;
+                    }
+                    None if !gpu_allowed => {
+                        crate::applog::info("Video decoding without the graphics card (setting)")
+                    }
+                    None => {}
                 }
                 shared.lock().status.gpu = gpu.is_some();
                 let engine = factory.CreateInstance(0, &attrs)?;
@@ -225,6 +254,7 @@ mod imp {
                 let mut frame_error: Option<windows::core::Error> = None;
                 let mut gave_up_on_picture = false;
                 let mut last_wake = std::time::Instant::now();
+                let mut described = false;
                 'outer: loop {
                     // Commands, waiting a little (about 120 checks a second).
                     let first = match rx.recv_timeout(Duration::from_millis(8)) {
@@ -297,6 +327,19 @@ mod imp {
                     if has_video {
                         let _ =
                             engine.GetNativeVideoSize(Some(&mut native[0]), Some(&mut native[1]));
+                    }
+                    if !described && engine.GetReadyState() >= 1 {
+                        // HAVE_METADATA: say what's being played, for the log.
+                        described = true;
+                        crate::applog::info(format!(
+                            "Playing: {}, {:.0} s, video {}x{} shown at {}x{}",
+                            if has_video { "video" } else { "audio only" },
+                            if d.is_finite() { d } else { 0.0 },
+                            native[0],
+                            native[1],
+                            size[0],
+                            size[1]
+                        ));
                     }
                     let changed = {
                         let mut s = shared.lock();
@@ -389,6 +432,26 @@ mod imp {
                         context,
                         manager,
                     })
+                }
+            }
+
+            /// The graphics card's name, for the log.
+            pub fn adapter_name(&self) -> String {
+                use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+                unsafe {
+                    self.device
+                        .cast::<IDXGIDevice>()
+                        .and_then(|d| d.GetAdapter())
+                        .and_then(|a| a.GetDesc())
+                        .map(|desc| {
+                            let n = desc.Description.iter().position(|c| *c == 0).unwrap_or(128);
+                            format!(
+                                "{} ({} MB video memory)",
+                                String::from_utf16_lossy(&desc.Description[..n]),
+                                desc.DedicatedVideoMemory / (1024 * 1024)
+                            )
+                        })
+                        .unwrap_or_else(|_| "unknown".into())
                 }
             }
 
@@ -547,7 +610,8 @@ mod imp {
     /// Open the video silently in a player, skip a little way in, and take a frame.
     fn capture_with_player(path: &Path) -> Option<Probe> {
         use std::time::Instant;
-        let player = Player::open(path, [0, 0], 0.0, Arc::new(|| {})).ok()?;
+        let gpu = crate::settings::Settings::load().video_gpu;
+        let player = Player::open(path, [0, 0], 0.0, gpu, Arc::new(|| {})).ok()?;
         let wait = |cond: &dyn Fn(&Status) -> bool| {
             let start = Instant::now();
             while start.elapsed() < Duration::from_secs(6) {
@@ -747,6 +811,7 @@ mod imp {
             _path: &Path,
             _size: [u32; 2],
             _volume: f32,
+            _gpu_allowed: bool,
             _wake: Wake,
         ) -> Result<Player, String> {
             Err("Playing inside TUFFcord needs Windows.".into())

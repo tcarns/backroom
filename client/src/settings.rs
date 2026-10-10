@@ -49,6 +49,12 @@ pub struct Settings {
     pub media_level: f32,
     /// Emoji picked recently, newest first.
     pub recent_emoji: Vec<String>,
+    /// Let the graphics card decode videos. Turned off by itself if the app
+    /// closes in the middle of playing one that way.
+    pub video_gpu: bool,
+    /// Files (by id) the app closed in the middle of playing even without the
+    /// graphics card: these open in the system's player instead.
+    pub play_outside: Vec<String>,
 }
 
 impl Default for Settings {
@@ -77,6 +83,8 @@ impl Default for Settings {
             show_members: true,
             media_level: DEFAULT_MEDIA_LEVEL,
             recent_emoji: Vec::new(),
+            video_gpu: true,
+            play_outside: Vec::new(),
         }
     }
 }
