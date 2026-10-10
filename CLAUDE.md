@@ -7,8 +7,18 @@ Backroom before 0.8; only env vars and the compatibility names below still say
 Repo: github.com/tcarns/TUFFcord (was tcarns/backroom; GitHub redirects the old
 name, and `proto/src/update.rs` keeps it as a fallback). Owner: Tyler Carns.
 
-**Priorities:** the app stays lightweight (memory, CPU); usage-efficient
-development. **Direction:** the server will later move to a small rented Linux
+## Core goal (check every request against it)
+A lightweight, very memory-efficient VoIP app with modern capabilities (file
+sharing, later screen sharing/streaming). Discord is the baseline to beat on
+resource use; its bloat and unwanted features are what to avoid. Before any
+development action, judge Tyler's request as a critical but fair colleague, not
+agreeing for its own sake. If it adds memory/CPU/binary-size cost, new
+dependencies, background work or Discord-style feature creep: say so plainly,
+estimate the cost, propose a leaner alternative, and wait for Tyler's answer
+before building. If it fits, say so in one line and proceed. Same scrutiny for
+your own suggestions. Development itself stays usage-efficient.
+
+**Direction:** the server will later move to a small rented Linux
 host (systemd, Caddy for HTTPS, no Docker), one server at a time; hosting at
 home must keep working.
 
