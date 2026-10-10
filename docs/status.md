@@ -5,8 +5,11 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 **Last updated:** 2026-10-10. **Released:** 0.9.0 (app and server).
 
 ## Waiting on the owner
-- Try 0.9.0 on Windows: a clip someone sends should play at once (no
-  "Downloading %"), window keeps its size after the update restart.
+- **At the next update (0.9.0 to anything newer), ask the owner whether the
+  window kept its size and place.** Keep this item until they confirm.
+  Updating 0.8.6 to 0.9.0 couldn't keep it: the 0.8.6 app that ran the update
+  had no code to save the window, so 0.9.0 opened at the default size. Play
+  right away was confirmed on the owner's PC (2026-10-10).
 
 ## In 0.9.0
 - Preload (`client/src/downloads.rs`): video/audio attachments visible in the
