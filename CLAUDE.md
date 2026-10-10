@@ -10,6 +10,16 @@ development. **Direction:** the server will later move to a small rented Linux
 host (systemd, Caddy for HTTPS, no Docker), one server at a time; hosting at
 home must keep working.
 
+## Start here
+- `tools/doctor.sh` runs at session start (hook in `.claude/settings.json`); its
+  `doctor:` lines show version, release, GitHub runs, disk, problems. If they're
+  not in context, run it.
+- `docs/status.md`: open items and next steps. **Rewrite it at the end of each
+  working session** (current state, not a log).
+- `docs/decisions.md`: settled choices and why; check before re-deciding.
+- `docs/troubleshooting.md`: symptom → cause → fix; check before debugging,
+  add an entry when something took more than one try.
+
 ## Layout
 - `proto/` shared by both: `lib.rs` wire protocol (serde, camelCase JSON),
   `files.rs` file-transfer types and sniffing, `update.rs` GitHub release
@@ -49,16 +59,15 @@ home must keep working.
 - Wine UI: `tools/wine-ui.sh start <exe>`, `shot out.png 400x80+340+440`, `stop`.
 - Release: bump `version` in root `Cargo.toml`, add a `## x.y.z` section at the
   top of `CHANGELOG.md` (it becomes the notes the app shows), commit, push to
-  main. Then check: `gh run list --repo tcarns/backroom --limit 2`, and assets
-  via `gh api repos/tcarns/backroom/releases/tags/vX` (`gh release` uses
-  GraphQL, which the proxy blocks).
+  main. Then `tools/release-check.sh` (run passed, files, checksums, old-name
+  copies, zip, `--version`). `gh release` uses GraphQL, which the proxy blocks;
+  use `gh api` (REST).
 - Commits: author Tyler Carns (repo-local config is set); end messages with
   the Co-Authored-By / Claude-Session lines from the session's instructions.
 
 ## Workspace quirks
-- Disk allowance is small: `target/` grows past 20 GB. When near full, delete
-  `target/debug/incremental` and old `target/compat/*`. "Bus error" from the
-  linker means the disk is full.
+- Disk allowance is small. `tools/doctor.sh` prunes build leftovers when space
+  runs low. "Bus error" from the linker means the disk is full.
 - `pkill -f <pattern>` matches its own shell and kills it (exit 144). Use
   `pkill -x <name>` or filter `ps -eo pid,args`.
 - The proxy blocks repo settings changes and GraphQL; plain `gh api` REST works.
@@ -75,3 +84,4 @@ home must keep working.
 - Screenshots: crop to the part being checked; full window only for layout.
 - Try anything that may be blocked (permissions, network) before building on it.
 - Keep wrap-ups short: what changed, how it was checked, what the user does.
+- Keep this file under ~120 lines; detail goes in `docs/`.

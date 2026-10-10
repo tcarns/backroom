@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Check a published release: the Release run passed, it's the latest, all files
+# are there, checksums match, the old-name copies are identical, the zip holds
+# the right files, and the server reports the right version (via Wine).
+#   tools/release-check.sh          the version in Cargo.toml
+#   tools/release-check.sh v0.8.1
+# Prints one line per check; exits non-zero if any failed.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+REPO=tcarns/backroom
+tag="${1:-v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)}"
+v="${tag#v}"
+fails=0
+ok() { if [ "$1" = 0 ]; then echo "  ok   $2"; else echo "  FAIL $2"; fails=$((fails + 1)); fi; }
+
+run=$(gh api "repos/$REPO/actions/workflows/release.yml/runs?per_page=1" --jq '.workflow_runs[0].conclusion // .workflow_runs[0].status' 2>/dev/null)
+[ "$run" = success ]; ok $? "latest Release run: $run"
+[ "$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null)" = "$tag" ]; ok $? "$tag is the latest release"
+
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"' EXIT
+urls=$(gh api "repos/$REPO/releases/tags/$tag" --jq '.assets[].browser_download_url' 2>/dev/null)
+want="TUFFcord.exe TUFFcord-server.exe backroom.exe backroom-server.exe SHA256SUMS.txt TUFFcord-$tag-windows.zip"
+for f in $want; do
+  grep -q "/$f\$" <<<"$urls"; ok $? "has $f"
+done
+for u in $urls; do curl -sSL -o "$dir/$(basename "$u")" "$u"; done
+(cd "$dir" && sha256sum --quiet -c SHA256SUMS.txt >/dev/null 2>&1); ok $? "checksums match"
+cmp -s "$dir/TUFFcord.exe" "$dir/backroom.exe" && cmp -s "$dir/TUFFcord-server.exe" "$dir/backroom-server.exe"
+ok $? "old-name copies are identical (for copies from before the rename)"
+list=$(unzip -Z1 "$dir/TUFFcord-$tag-windows.zip" 2>/dev/null)
+grep -qx TUFFcord/TUFFcord.exe <<<"$list" && grep -qx TUFFcord/TUFFcord-server.exe <<<"$list" && grep -qx TUFFcord/README.txt <<<"$list"
+ok $? "zip has TUFFcord/ with both programs and README.txt"
+if command -v wine >/dev/null; then
+  said=$(WINEDEBUG=-all timeout 60 wine "$dir/TUFFcord-server.exe" --version 2>/dev/null | tr -d '\r')
+  [ "$said" = "backroom-server $v" ]; ok $? "server --version says \"backroom-server $v\" (older servers need exactly that)"
+else
+  echo "  --   no Wine: skipped the --version check"
+fi
+[ $fails = 0 ] && echo "release $tag: ALL OK" || { echo "release $tag: $fails FAILED"; exit 1; }

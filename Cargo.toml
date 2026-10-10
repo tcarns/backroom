@@ -25,6 +25,14 @@ codegen-units = 1
 strip = true
 panic = "abort"
 
+# Debug builds: no debugging info for other people's libraries (most of the
+# build folder's size), only file/line info for ours (enough for panics).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # Password hashing is very slow without optimizations; keep tests quick.
 [profile.dev.package.argon2]
 opt-level = 3
