@@ -2,8 +2,8 @@
 
 Voice and text chat for one friend group (all on Windows), in Rust. Called
 Backroom before 0.8; code, crate names and env vars still say `backroom`.
-Repo: github.com/tcarns/backroom (rename to TUFFcord pending; the owner does it
-in GitHub settings, the session proxy can't). Owner: Tyler Carns.
+Repo: github.com/tcarns/TUFFcord (was tcarns/backroom; GitHub redirects the old
+name, and `proto/src/update.rs` keeps it as a fallback). Owner: Tyler Carns.
 
 **Priorities:** the app stays lightweight (memory, CPU); usage-efficient
 development. **Direction:** the server will later move to a small rented Linux

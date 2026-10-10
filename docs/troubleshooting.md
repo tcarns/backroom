@@ -36,7 +36,7 @@ bug or environment problem takes more than one try to understand.
 - **"certificate verify failed" in tunnel tests** → the test CA isn't trusted;
   `tests/test_tunnel.py` sets `SSL_CERT_FILE` to a bundle with it.
 - **`gh release …` fails with 403 (GraphQL)** → the proxy only allows REST:
-  `gh api repos/tcarns/backroom/releases/tags/vX`.
+  `gh api repos/tcarns/TUFFcord/releases/tags/vX`.
 - **`gh api -X PATCH repos/…` refused ("Repository settings writes are not
   permitted")** → owner must change repo settings on github.com.
 - **Wine: blank screenshots** → taken before the window drew; use
