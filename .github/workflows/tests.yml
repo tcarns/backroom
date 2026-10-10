@@ -16,5 +16,14 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
+      - name: Unit tests
         run: cargo test --workspace
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: End-to-end tests
+        run: |
+          pip install --quiet websockets
+          tests/run.py

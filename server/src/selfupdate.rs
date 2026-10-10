@@ -220,7 +220,10 @@ pub fn print_version_if_asked() {
         .skip(1)
         .any(|a| a == "--version" || a == "-V")
     {
-        println!("backroom-server {}", proto::update::CURRENT);
+        // Tests make a copy of this server pose as a newer version.
+        let version = std::env::var("BACKROOM_TEST_REPORT_VERSION")
+            .unwrap_or_else(|_| proto::update::CURRENT.to_string());
+        println!("backroom-server {version}");
         std::process::exit(0);
     }
 }

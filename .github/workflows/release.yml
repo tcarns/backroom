@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # tags, to build the previous release for the version checks
 
       - name: Is this version already released?
         id: version
@@ -54,6 +56,19 @@ jobs:
       - name: Run the tests
         if: steps.version.outputs.new == 'true'
         run: cargo test --workspace
+
+      - uses: actions/setup-python@v5
+        if: steps.version.outputs.new == 'true'
+        with:
+          python-version: "3.12"
+
+      # End to end, including this version's app and server against the
+      # previous release's (people update at different times).
+      - name: End-to-end tests, with the previous release
+        if: steps.version.outputs.new == 'true'
+        run: |
+          pip install --quiet websockets
+          tests/run.py --compat
 
       - name: Build the app and the server
         if: steps.version.outputs.new == 'true'

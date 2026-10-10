@@ -207,7 +207,7 @@ On Windows:
 
 To cross-compile the Windows programs from Linux, follow the steps in `.github/workflows/release.yml`.
 
-`cargo test` runs the voice engine tests. The `backroom-bot` program is a headless test client that plays a tone and measures what it hears:
+`cargo test` runs the unit tests, and `tests/run.py` the end-to-end ones (real server, test bots, accounts, files, voice, self-update, an HTTPS tunnel like Cloudflare's; `--compat` adds checks against the previous release). GitHub runs both on every push, and the version checks before each release. The `backroom-bot` program is a headless test client that plays a tone and measures what it hears:
 
 ```
 backroom-bot --server ws://localhost:3000/ws --password pw --name Bot --channel Lounge --tone 440 --listen 660 --seconds 10

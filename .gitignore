@@ -4,3 +4,5 @@ data/
 *.log
 # Holds the group password: never commit it.
 backroom-server.toml
+# Same for the renamed settings file (0.8 and later).
+TUFFcord-server.toml
