@@ -2,6 +2,11 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.2
+
+- Pointing at a chat message now gives it a soft highlight, like Discord.
+- On videos and audio, the volume bar is now a vertical bar that pops up above the speaker button when you point at it. Click the speaker to mute, or scroll over it, as before.
+
 ## 0.8.1
 
 - If the app crashes, the reason now goes in its log, and the server's log gets it the next time the app starts (before, the app just closed and nothing was written down).

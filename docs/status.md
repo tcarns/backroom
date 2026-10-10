@@ -2,7 +2,7 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.8.1 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.8.2 (app and server).
 
 ## Waiting on the owner
 - **A friend's app crashes playing a video** (worked for the owner; friend was
@@ -21,7 +21,7 @@ Where things stand. Rewrite (don't append) at the end of each working session.
   startup objects (2026-10-10); the app runs under Wine, audio plays.
 - `tools/setup.sh` only before building or testing (~5 min bare, all passing).
 
-## Unreleased (on main, ships with the next version)
+## In 0.8.2
 - Chat messages get a subtle highlight under the pointer (Discord style).
 - Video and audio players: the volume bar is now a vertical popup above the
   speaker button, shown while it's hovered (`client/src/volume_ui.rs`); click
