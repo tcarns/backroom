@@ -3,7 +3,8 @@
 //! people button at the top of the chat.
 
 use crate::theme::{self, pal};
-use crate::{chat_text, paint_avatar, App, VolumePop};
+use crate::widgets::paint_avatar;
+use crate::{chat_text, App, VolumePop};
 use eframe::egui::{self, Align2, CornerRadius, FontId, Frame, Margin, Sense, Stroke};
 use std::collections::{BTreeMap, HashSet};
 

@@ -2,7 +2,8 @@
 //! Settings, and the admin tools (people list, kick, ban, reset password).
 
 use crate::theme::pal;
-use crate::{primary_button, App, Conn};
+use crate::widgets::primary_button;
+use crate::{App, Conn};
 use backroom::net::{self, SignIn};
 use eframe::egui::{
     self, Align, CornerRadius, FontId, Frame, Key, Layout, Margin, RichText, Sense, Stroke,

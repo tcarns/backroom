@@ -33,16 +33,40 @@ home must keep working.
   actions; `accounts.rs` storage (argon2); `files.rs` HTTP endpoints on the same
   port (POST/PUT/GET /files, Range, chunked bodies); `selfupdate.rs` watcher +
   updater; `config.rs` settings file and its upgrades; `log.rs`.
-- `client/src/` egui 0.32 (glow). `main.rs` (3.3k lines: app state, server
-  messages, chat view, settings window, dialogs); `accounts.rs` sign-in screen
-  and account UI; `attach.rs` + `attach_ui.rs` attachments and players;
-  `media.rs` Media Foundation player (Windows only); `crash.rs` crash records;
-  `net.rs`, `voice.rs`, `audio.rs` (cpal, opus); `files.rs` HTTP transfers;
-  `settings.rs`, `applog.rs`, `updater.rs`, `members.rs`, `chat_text.rs`,
-  `emoji.rs`, `twemoji.rs`, `theme.rs`, `keys.rs`; `bin/bot.rs` headless test
-  client (tones, `--send-file`).
+- `client/src/` egui 0.32 (glow). The `App` struct is split across files,
+  one `impl App` block per area:
+  - `main.rs` (~800 lines): `main`, state types, `App` struct and `new`, voice
+    and audio control, `handle_keys`, `eframe::App::update`.
+  - `server_msgs.rs` network events and every `ServerMsg`; `sidebar.rs` main
+    layout, channel lists, voice panel, own row; `chat.rs` header, message
+    list, composer; `emoji_picker.rs`; `dialogs.rs` delete confirm, image
+    viewer, drop overlay, volume popup, banner; `update_ui.rs` update bar and
+    restart; `settings_window.rs` one function per section; `widgets.rs`
+    shared drawing helpers (avatars, buttons, colors, time labels).
+  - `accounts.rs` sign-in screen and account UI; `attach.rs` + `attach_ui.rs`
+    attachments and players; `members.rs`; `chat_text.rs`; `theme.rs`.
+  - Library (`lib.rs`, shared with `bin/bot.rs`, no UI): `media.rs` Media
+    Foundation player (Windows only); `crash.rs`; `net.rs`, `voice.rs`,
+    `audio.rs` (cpal, opus); `files.rs` HTTP transfers; `settings.rs`,
+    `applog.rs`, `updater.rs`, `emoji.rs`, `twemoji.rs`, `keys.rs`;
+    `bin/bot.rs` headless test client (tones, `--send-file`).
 - `tests/` end-to-end suites (Python), `tools/` scripts, `.github/workflows/`
   `tests.yml` (every push) and `release.yml` (publishes when the version rises).
+
+## Where new code goes (keep `main.rs` small)
+- New features go in the module for their area (list above), or a new module
+  when no area fits; `main.rs` gets only new `App` fields, their setup in
+  `new`, and one-line calls from `update`. Same for server `main.rs`: new
+  areas get their own file (voice, history, attachments are the next cuts).
+- A new screen, dialog or settings section is its own function; a settings
+  section is a `fn x_section(&mut self, ui)` in `settings_window.rs`. When a
+  change takes a function past ~200 lines or a file past ~1,000, split it in
+  that change (`tools/doctor.sh` lists files over the limit).
+- Shared drawing helpers go in `widgets.rs`; logic with no UI goes in the
+  library (`lib.rs` side) so the bot and unit tests can use it.
+- New modules: `//!` line saying what's in it, explicit `use crate::...`
+  imports (`use super::*` only in test modules), `pub(crate)` only for what other files call.
+  Add the file to the Layout list above in the same commit.
 
 ## Never change (older copies depend on them)
 - Env vars `BACKROOM_SERVER_CHILD`, `BACKROOM_RESUME`; watcher exit code 75.

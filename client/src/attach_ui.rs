@@ -682,7 +682,7 @@ impl App {
                                 }
                                 ui.label(RichText::new(sub).size(12.0).color(pal().faint));
                             });
-                            if crate::close_button(ui)
+                            if crate::widgets::close_button(ui)
                                 .on_hover_text("Don't send this")
                                 .clicked()
                             {

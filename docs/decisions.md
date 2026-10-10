@@ -29,3 +29,10 @@ Settled choices and why. Add one when a choice would otherwise be revisited.
   Windows exception filter rather than unwinding.
 - **Future hosting:** small Linux VPS, systemd (not Docker) and Caddy, chosen for
   low memory; one server at a time (no multi-server app support).
+- **Client UI split by area, not one big `main.rs` (2026-10-10).** `main.rs`
+  had grown to 3.3k lines and every feature read large slices of it. Now each
+  area (server messages, sidebar, chat, dialogs, settings, ...) is its own
+  file with an `impl App` block, and settings has one function per section.
+  New features go in the matching module; rules in CLAUDE.md. Server
+  `main.rs` (1.5k) stays whole until it grows; next cuts there are voice,
+  history and attachments.

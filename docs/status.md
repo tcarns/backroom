@@ -38,12 +38,15 @@ Where things stand. Rewrite (don't append) at the end of each working session.
 
 ## Undecided options (from the efficiency review)
 Full review with token estimates: `analysis/token-efficiency-review.md` in the
-project files (2026-10-10). Recommended there: split client `main.rs` now (scripted
-moves, no behavior change, before the admin-settings UI), server later if it
-grows. Owner wants to revisit H next, now that the setup changes are done.
+project files (2026-10-10). Client `main.rs` split done 2026-10-10 (D, client
+half): 8 modules, settings window one function per section, rules in CLAUDE.md
+"Where new code goes", doctor lists files over 1,000 lines. No behavior change;
+build, Windows check and all e2e suites passed; no Wine screenshot taken.
+Owner wants to revisit H next.
 
 - C: support only current + previous version; drop pre-0.7 compatibility code.
-- D: split client `main.rs` (3.3k lines) and server `main.rs` into modules.
+- D (server half): split server `main.rs` (1.5k lines) when it grows; cuts:
+  voice, history, attachments.
 - E: automated UI tests (egui renders without a window) instead of screenshots.
 - G: finish the internal rename (crates, `BACKROOM_*` names); careful with update
   compatibility (see CLAUDE.md "Never change").

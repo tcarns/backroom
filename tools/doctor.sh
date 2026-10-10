@@ -6,6 +6,7 @@
 #   - ends test servers, bots, Wine and virtual displays left running
 #   - checks the tools builds and tests need
 #   - shows the version, the latest release, and the last GitHub runs
+#   - lists source files over 1,000 lines (split them before adding more)
 # --quick skips the network checks. --keep leaves running processes alone
 # (used after a conversation summary, when a test may be running).
 cd "$(dirname "$0")/.." || exit 0
@@ -64,5 +65,7 @@ fi
 say "doctor: $line"
 say "doctor: disk $(avail_gb) GB free, target $(du -sh target 2>/dev/null | cut -f1)$freed; ended $ended leftover process(es)"
 for p in "${problems[@]}"; do say "doctor: PROBLEM $p"; done
+big=$(wc -l client/src/*.rs client/src/bin/*.rs server/src/*.rs proto/src/*.rs 2>/dev/null | awk '$2 != "total" && $1 > 1000 {sub("/src/", "/", $2); printf "%s %s, ", $2, $1}')
+[ -n "$big" ] && say "doctor: over 1,000 lines (split before adding; see CLAUDE.md): ${big%, }"
 say "doctor: open items are in docs/status.md"
 exit 0
