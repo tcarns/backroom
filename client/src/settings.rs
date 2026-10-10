@@ -55,6 +55,9 @@ pub struct Settings {
     /// Files (by id) the app closed in the middle of playing even without the
     /// graphics card: these open in the system's player instead.
     pub play_outside: Vec<String>,
+    /// The two settings above were reset once in 0.8.5: before 0.8.3 a video
+    /// could freeze the app, which then turned them on wrongly.
+    pub video_fallbacks_reset: bool,
 }
 
 impl Default for Settings {
@@ -85,6 +88,7 @@ impl Default for Settings {
             recent_emoji: Vec::new(),
             video_gpu: true,
             play_outside: Vec::new(),
+            video_fallbacks_reset: false,
         }
     }
 }
@@ -159,10 +163,19 @@ pub fn move_old_folder(base: &std::path::Path) -> &'static str {
 
 impl Settings {
     pub fn load() -> Settings {
-        std::fs::read_to_string(path())
+        let mut s: Settings = std::fs::read_to_string(path())
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !s.video_fallbacks_reset {
+            s.video_fallbacks_reset = true;
+            if !s.video_gpu || !s.play_outside.is_empty() {
+                s.video_gpu = true;
+                s.play_outside.clear();
+                s.save();
+            }
+        }
+        s
     }
 
     pub fn save(&self) {

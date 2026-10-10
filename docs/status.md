@@ -2,13 +2,14 @@
 
 Where things stand. Rewrite (don't append) at the end of each working session.
 
-**Last updated:** 2026-10-10. **Released:** 0.8.4 (app and server).
+**Last updated:** 2026-10-10. **Released:** 0.8.5 (app and server).
 
 ## Waiting on the owner
 - **Video freeze (owner, 0.8.2)**: the app hung seconds into a video, with
   the Windows volume mixer, with and without the graphics card. Cause: a
   lock-order deadlock between the player thread and Media Foundation's
-  callback (see troubleshooting). Fixed in 0.8.3; not reproducible here (no
+  callback (see troubleshooting). Fixed in 0.8.3; 0.8.5 undoes the fallbacks the freeze had
+  switched on (system player for that file, no GPU). Not reproducible here (no
   Windows audio), so the owner confirms on his machine and re-enables
   "Use the graphics card for videos" (0.8.2 turned it off after the freeze).
   The friend's earlier 0.7.1 "crash" may have been the same bug (unchecked).

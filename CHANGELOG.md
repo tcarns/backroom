@@ -2,6 +2,11 @@
 
 Each version's section becomes the notes on its GitHub release, which the app shows when an update is available.
 
+## 0.8.5
+
+- Videos that froze the app before 0.8.3 play in the chat again instead of opening in your video player, and the graphics card is used for videos again. Both were turned on by the freeze, not by a real problem with the video.
+- Settings has a "Play videos here again" button whenever some files are set to open in your video player.
+
 ## 0.8.4
 
 - The last of the old name is gone. The app and server still called `backroom.exe` and `backroom-server.exe` (they kept that name when updating) rename themselves to `TUFFcord.exe` and `TUFFcord-server.exe` the next time they start. A shortcut or taskbar pin to the old name may need making again, and Windows may ask once more to let `TUFFcord-server.exe` through the firewall (click Allow).

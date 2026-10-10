@@ -282,6 +282,16 @@ impl App {
         {
             self.s.save();
         }
+        let outside = self.s.play_outside.len();
+        if outside > 0
+            && ui
+                .button(format!("Play videos here again ({outside} open in your video player)"))
+                .on_hover_text("TUFFcord once closed in the middle of these, so they open in your video player instead.")
+                .clicked()
+        {
+            self.s.play_outside.clear();
+            self.s.save();
+        }
         flags_changed
     }
 
