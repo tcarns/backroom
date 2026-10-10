@@ -5,13 +5,13 @@
 #   tools/windows.sh build    TUFFcord .exe files in target/x86_64-pc-windows-gnu/release
 # Needs Ubuntu's rustc-1.91/cargo-1.91/rust-1.91-src, gcc-mingw-w64-x86-64,
 # g++-mingw-w64-x86-64 and cmake. STD_SRC: the Rust standard library source
-# (default /home/claude/rust-std-src/library).
+# (default ~/.cache/tuffcord/rust-std-src/library; tools/setup.sh prepares it).
 # On a Windows PC with Rust installed, just run `cargo build --release`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH=/usr/lib/rust-1.91/bin:$PATH
 export RUSTC_BOOTSTRAP=1
-export __CARGO_TESTS_ONLY_SRC_ROOT=${STD_SRC:-/home/claude/rust-std-src/library}
+export __CARGO_TESTS_ONLY_SRC_ROOT=${STD_SRC:-$HOME/.cache/tuffcord/rust-std-src/library}
 export CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc
 export CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++
 export AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar

@@ -27,8 +27,6 @@ Where things stand. Rewrite (don't append) at the end of each working session.
      settings.
    - Setup guide (VPS, service file, Caddy, domain, copying `data/`).
    - Later, optional: HTTPS built into the server (drops Caddy, ~20–40 MB).
-2. `tools/setup.sh`: install everything a fresh workspace needs, so new
-   sessions start cheaply.
 
 ## Undecided options (from the efficiency review)
 - C: support only current + previous version; drop pre-0.7 compatibility code.

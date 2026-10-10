@@ -9,7 +9,7 @@
 # --quick skips the network checks. --keep leaves running processes alone
 # (used after a conversation summary, when a test may be running).
 cd "$(dirname "$0")/.." || exit 0
-REPO=tcarns/backroom
+REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github.com[:/]##; s#\.git$##'); REPO=${REPO:-tcarns/backroom}
 say() { printf '%s\n' "$*"; }
 problems=()
 
@@ -46,7 +46,7 @@ need wine "Windows UI checks"
 need Xvfb "Windows UI checks"
 need gh "releases"
 [ -x /usr/lib/rust-1.91/bin/cargo ] || problems+=("no /usr/lib/rust-1.91 (tools/windows.sh needs it)")
-[ -d "${STD_SRC:-/home/claude/rust-std-src/library}" ] || problems+=("no Rust std source for Windows builds (STD_SRC)")
+[ -d "${STD_SRC:-$HOME/.cache/tuffcord/rust-std-src/library}" ] || problems+=("no Rust std source for Windows builds (STD_SRC)")
 python3 -c "import websockets" 2>/dev/null || problems+=("python websockets missing: pip install --break-system-packages websockets")
 
 # --- project

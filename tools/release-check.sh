@@ -7,7 +7,7 @@
 # Prints one line per check; exits non-zero if any failed.
 set -uo pipefail
 cd "$(dirname "$0")/.."
-REPO=tcarns/backroom
+REPO=$(git remote get-url origin 2>/dev/null | sed -E 's#^.*github.com[:/]##; s#\.git$##'); REPO=${REPO:-tcarns/backroom}
 tag="${1:-v$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)}"
 v="${tag#v}"
 fails=0
